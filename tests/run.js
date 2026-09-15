@@ -737,6 +737,7 @@ describe('taps', function () {
  * in the manifest, was read by nobody. */
 describe('launch shortcuts', function () {
   const { launchOverrides } = GS.storage;
+  const KNOWN_MODES = { classic: true, casual: true, daily: true };
 
   it('reads both shortcuts the manifest declares', function () {
     equal(launchOverrides('?mode=daily').mode, 'daily', 'the daily shortcut');
@@ -747,6 +748,32 @@ describe('launch shortcuts', function () {
     const plain = launchOverrides('');
     equal(plain.mode, null, 'no mode override');
     assert(!plain.newGame, 'no new game');
+  });
+
+  /* The whole point of the split: a shortcut says what to play now, and says
+   * nothing about what to play next time. */
+  it('lets a shortcut choose this launch without touching the stored preference', function () {
+    const { modeForLaunch } = GS.storage;
+    const settings = { mode: 'classic' };
+    equal(modeForLaunch(settings, '?mode=daily', KNOWN_MODES), 'daily', 'this launch plays the daily');
+    equal(settings.mode, 'classic', 'and classic is still what the plain icon will launch');
+  });
+
+  it('falls back to the stored preference for a mode it does not know', function () {
+    const settings = { mode: 'casual' };
+    equal(GS.storage.modeForLaunch(settings, '?mode=nonsense', KNOWN_MODES), 'casual',
+      'a URL nobody wrote must not be able to put the game in an unknown mode');
+    equal(GS.storage.modeForLaunch(settings, '', KNOWN_MODES), 'casual', 'and a plain launch keeps it');
+  });
+
+  /* The query string is the one part of a launch anybody can write, and a plain
+   * object answers to every name on Object.prototype. */
+  it('refuses a mode it only inherited rather than owns', function () {
+    const settings = { mode: 'classic' };
+    for (const trick of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      equal(GS.storage.modeForLaunch(settings, '?mode=' + trick, KNOWN_MODES), 'classic',
+        trick + ' is not a mode');
+    }
   });
 });
 
@@ -977,13 +1004,76 @@ function loadServiceWorker() {
   const listeners = {};
   const cacheStore = new Map();
   const network = new Map();
+  const dropped = new Set();
   const waits = [];
   let versionCache = null;
+  let allOffline = false;
 
-  const urlOf = (req) => (typeof req === 'string' ? req : req.url);
+  /* Resolve the way a real worker does. The asset list in sw.js is relative to
+   * the worker's scope and a page asks for the absolute URL, so both have to
+   * land on one key or the fake cache would never hit. */
+  const BASE = 'https://hexsphere.test/';
+  const urlOf = (req) => new URL(typeof req === 'string' ? req : req.url, BASE).href;
+
+  /* The network serves every asset by default. An all-or-nothing refresh only
+   * commits when every file arrives, so a test about one unreachable file must
+   * still be able to fetch all the others. */
+  const bodyFor = (url) => (network.has(url) ? network.get(url) : 'v1 ' + url);
+
+  /* A browser allows only a handful of connections per host, and a response
+   * whose body is never read keeps its connection. Fetching the whole app and
+   * holding every response until the last one arrives therefore deadlocks: the
+   * later requests never get a connection. The fake models that, because a
+   * fake network with unlimited connections cheerfully passes code that hangs
+   * a real install. */
+  const CONNECTION_LIMIT = 6;
+  let inFlight = 0;
+  const waiting = [];
+
+  function acquire() {
+    if (inFlight < CONNECTION_LIMIT) { inFlight += 1; return Promise.resolve(); }
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      waiting.push(function () { if (!settled) { settled = true; inFlight += 1; resolve(); } });
+      /* Draining happens in microtasks, so a worker that reads its bodies
+       * frees a slot long before this timer. One that does not, never will. */
+      setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error('connection starved: a response was fetched and never read'));
+      }, 0);
+    });
+  }
+
+  function release() {
+    inFlight -= 1;
+    const next = waiting.shift();
+    if (next) next();
+  }
 
   function response(body) {
-    return { body, status: 200, type: 'basic', clone: () => response(body) };
+    return {
+      body,
+      status: 200,
+      type: 'basic',
+      headers: {},
+      clone: () => response(body),
+      blob: () => Promise.resolve(body),
+      text: () => Promise.resolve(body)
+    };
+  }
+
+  /* A response off the network holds its connection until something reads it. */
+  function netResponse(body) {
+    const res = response(body);
+    let drained = false;
+    const drain = () => {
+      if (!drained) { drained = true; release(); }
+      return Promise.resolve(body);
+    };
+    res.blob = drain;
+    res.text = drain;
+    return res;
   }
 
   function makeCache() {
@@ -991,11 +1081,7 @@ function loadServiceWorker() {
     return {
       entries,
       match: (req) => Promise.resolve(entries.get(urlOf(req))),
-      put: (req, res) => { entries.set(urlOf(req), res); return Promise.resolve(); },
-      addAll: (urls) => {
-        for (const u of urls) entries.set(u, response('precached ' + u));
-        return Promise.resolve();
-      }
+      put: (req, res) => { entries.set(urlOf(req), res); return Promise.resolve(); }
     };
   }
 
@@ -1023,10 +1109,19 @@ function loadServiceWorker() {
       this.method = 'GET';
       this.cache = opts && opts.cache;
     },
+    Response: function (body, opts) {
+      this.body = body;
+      this.status = (opts && opts.status) || 200;
+      this.type = 'basic';
+      this.headers = (opts && opts.headers) || {};
+      this.clone = () => this;
+      this.blob = () => Promise.resolve(body);
+      this.text = () => Promise.resolve(body);
+    },
     fetch: (req) => {
       const url = urlOf(req);
-      if (!network.has(url)) return Promise.reject(new Error('offline: ' + url));
-      return Promise.resolve(response(network.get(url)));
+      if (allOffline || dropped.has(url)) return Promise.reject(new Error('offline: ' + url));
+      return acquire().then(() => netResponse(bodyFor(url)));
     },
     self: {
       addEventListener: (type, fn) => { listeners[type] = fn; },
@@ -1048,37 +1143,91 @@ function loadServiceWorker() {
 
   return {
     install: () => drive('install').settled(),
-    request(url) {
+    request(url, mode) {
       let responded = Promise.resolve(undefined);
       const run = drive('fetch', {
-        request: { url, method: 'GET' },
+        request: { url, method: 'GET', mode: mode || 'no-cors' },
         respondWith: (p) => { responded = p; }
       });
       return responded.then((res) => ({ res, settled: run.settled }));
     },
-    seed(url, body) { cacheStore.get(versionCache).entries.set(url, response(body)); },
-    setNetwork(url, body) { network.set(url, body); },
+    /* One launch: the document, then every script it references. Tests drive
+     * this rather than a lone request, because a half-updated cache only shows
+     * itself when a page asks for more than one file. */
+    load(urls) {
+      return Promise.all(urls.map((u, i) => this.request(u, i === 0 ? 'navigate' : 'no-cors')))
+        .then((hits) => Promise.all(hits.map((h) => h.settled())).then(() => hits.map((h) => h.res)));
+    },
+    seed(url, body) { cacheStore.get(versionCache).entries.set(urlOf(url), response(body)); },
+    setNetwork(url, body) { network.set(urlOf(url), body); },
+    drop(url) { dropped.add(urlOf(url)); },
     cached(url) {
-      const hit = cacheStore.get(versionCache).entries.get(url);
+      const hit = cacheStore.get(versionCache).entries.get(urlOf(url));
       return hit && hit.body;
     },
-    offline() { network.clear(); }
+    offline() { allOffline = true; }
   };
 }
 
 const ASSET = 'https://hexsphere.test/js/game.js';
+const INDEX = 'https://hexsphere.test/index.html';
+const SOLVER = 'https://hexsphere.test/js/solver.js';
+const MAIN = 'https://hexsphere.test/js/main.js';
 
 describe('service worker', function () {
+  /* The game is eight scripts that call into each other, so the unit that has
+   * to be consistent is the whole app, not one file. A launch that is closed
+   * part-way through a refresh used to leave new main.js beside old solver.js;
+   * the next launch served that pair, main.js called solver.levelFor, which the
+   * old solver does not export, and the board never drew. */
+  it('never commits half a deploy, because one stale file blanks the board', function () {
+    const sw = loadServiceWorker();
+    return sw.install().then(function () {
+      sw.setNetwork(MAIN, 'main that calls levelFor');
+      sw.setNetwork(SOLVER, 'solver that exports levelFor');
+      /* The launch is cut off before solver.js comes back. */
+      sw.drop(SOLVER);
+      return sw.load([INDEX, SOLVER, MAIN]);
+    }).then(function () {
+      equal(sw.cached(MAIN), 'v1 ' + MAIN, 'main.js must not move ahead of the solver it calls');
+      equal(sw.cached(SOLVER), 'v1 ' + SOLVER, 'so the last version that ran as a set is what stays');
+    });
+  });
+
+  /* Holding every response until the last one arrived deadlocked the install on
+   * a real browser: seventeen assets, six connections, and nothing draining the
+   * first six. Nothing threw — the worker simply stayed in "installing" for
+   * ever, which on a phone looks exactly like the blank screen above. */
+  it('reads each response as it arrives, so the refresh cannot starve itself', function () {
+    const sw = loadServiceWorker();
+    return sw.install().then(function () {
+      sw.setNetwork(MAIN, 'new main');
+      return sw.load([INDEX, MAIN]);
+    }).then(function () {
+      equal(sw.cached(MAIN), 'new main', 'the refresh has to finish, not hang on its own connections');
+    });
+  });
+
+  it('commits the whole deploy once every file has arrived', function () {
+    const sw = loadServiceWorker();
+    return sw.install().then(function () {
+      sw.setNetwork(MAIN, 'main that calls levelFor');
+      sw.setNetwork(SOLVER, 'solver that exports levelFor');
+      return sw.load([INDEX, SOLVER, MAIN]);
+    }).then(function () {
+      equal(sw.cached(MAIN), 'main that calls levelFor', 'both halves of the deploy land together');
+      equal(sw.cached(SOLVER), 'solver that exports levelFor', 'so the next launch runs one version');
+    });
+  });
+
   it('refreshes a cached asset so a pushed fix reaches an installed client', function () {
     const sw = loadServiceWorker();
     return sw.install().then(function () {
       sw.seed(ASSET, 'old bytes');
       sw.setNetwork(ASSET, 'new bytes');
-      return sw.request(ASSET);
-    }).then(function (hit) {
-      equal(hit.res.body, 'old bytes', 'the cached copy is served at once, so the game stays instant');
-      return hit.settled();
-    }).then(function () {
+      return sw.load([INDEX, ASSET]);
+    }).then(function (served) {
+      equal(served[1].body, 'old bytes', 'the cached copy is served at once, so the game stays instant');
       equal(sw.cached(ASSET), 'new bytes', 'the cache now holds the fix, so the next load picks it up');
     });
   });
@@ -1088,11 +1237,9 @@ describe('service worker', function () {
     return sw.install().then(function () {
       sw.seed(ASSET, 'cached bytes');
       sw.offline();
-      return sw.request(ASSET);
-    }).then(function (hit) {
-      equal(hit.res.body, 'cached bytes', 'offline play must keep working');
-      return hit.settled();
-    }).then(function () {
+      return sw.load([INDEX, ASSET]);
+    }).then(function (served) {
+      equal(served[1].body, 'cached bytes', 'offline play must keep working');
       equal(sw.cached(ASSET), 'cached bytes', 'a failed refresh must not evict the copy we have');
     });
   });

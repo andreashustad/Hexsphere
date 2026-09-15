@@ -7,7 +7,7 @@ wrapped as an Android WebView app in `android/`.
 ## Running it
 
 ```sh
-node tests/run.js                 # 29 tests, pure Node, no deps
+node tests/run.js                 # pure Node, no deps
 npx http-server . -p 8080         # needed for the service worker; file:// won't do
 
 cd android
@@ -33,13 +33,31 @@ project published under `andreashustad.github.io` shares one store. The
 `hexsphere.v1` key prefix (`js/storage.js:6`) is what keeps them apart, so it
 is load-bearing, not cosmetic.
 
-**The service worker is stale-while-revalidate.** A viewer gets the cached copy
-at once and the new bytes on their *next* load, so a fix is never one push away
-from being visible. Do not "optimise" it back to returning a cache hit and
-stopping: that is what made pushed fixes unreachable, because `sw.js`'s own
-bytes were unchanged so no new worker installed. A failed refresh resolves to
-undefined rather than rejecting, which is what keeps offline play working, so
-keep that `.catch`.
+**The service worker refreshes the whole app or none of it.** A viewer gets the
+cached copy at once and the new bytes on their *next* load, so a fix is never
+one push away from being visible. Do not "optimise" it back to returning a cache
+hit and stopping: that is what made pushed fixes unreachable, because `sw.js`'s
+own bytes were unchanged so no new worker installed.
+
+What it must never go back to is refreshing one file at a time. The game is
+eight scripts that call into each other, so the unit that has to stay consistent
+is the whole app. Per-file refresh meant a launch closed part-way left new
+`main.js` beside old `solver.js`; the next launch served that pair, `main.js`
+called `solver.levelFor`, which the old solver does not export, and the board
+never drew. A blank screen with a warm cache and a healthy network, which reads
+as "the PWA is broken" and is invisible from the repo. `refreshAll` therefore
+fetches everything before writing anything, and a failed fetch commits nothing
+rather than committing a mixture — which is also what keeps offline play
+working, so keep that `.catch` on the navigation path.
+
+**Do not hold fetched responses without reading them.** `refreshAll` calls
+`response.blob()` as each response arrives rather than keeping all seventeen
+until the last one lands. A response whose body is never read holds its
+connection, and a browser allows about six per host, so the first version of
+this deadlocked the install outright: eleven assets never got a connection, the
+worker sat in `installing` for ever and nothing threw. The unit tests passed,
+because a fake network has no connection limit. `tests/run.js` now models the
+limit, which is the only reason that bug is catchable without a browser.
 
 **Board generation is synchronous and runs on the player's first tap**, so
 `timeBudgetMs` is a freeze budget, not a compute budget. Every board the game

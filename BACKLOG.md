@@ -2,48 +2,55 @@
 
 ## Bug-fix plan
 
-Seven of the eight defects from the 2026-09-15 review are fixed and covered by
-tests. Git history holds what each one was. One is left, and it is left
-deliberately.
+All eight defects from the 2026-09-15 review are fixed and covered by tests, as
+is the blank-screen defect found later the same day. Git history holds what each
+one was.
 
-### 6. Home-screen shortcuts corrupt persistent state — `js/main.js:635`
+One decision is still open, and it is small. `?new=1` is declared in
+`manifest.webmanifest`, parsed by `storage.launchOverrides`, and deliberately
+acted on by nobody, because a launch always starts a new game anyway. Either
+delete the shortcut from the manifest or leave it as a second route to the same
+thing. Nothing depends on the answer.
 
-`applyLaunchParams` writes `settings.mode` and persists it, so launching the
-Daily shortcut once switches every later normal launch to daily mode.
+### Noticed while playing — both now characterised (2026-09-15)
 
-Parsing is extracted and tested (`storage.launchOverrides`, which does now
-parse `?new=1`), but nothing acts on either value yet beyond the old mode
-write. The persistence half is not fixed, because it needs a decision rather
-than a patch:
+**The reset button restores the board oddly. Cause found and fixed.** `spinTo`
+drives `renderer.state.orientation` for 420ms from a start and a target captured
+when it began, so it outlived the board it was started for. Hint and then New
+game inside that window, and the fresh board spent the rest of the window
+rotating towards the *previous* board's hint cell. `newGame` assigns the
+orientation once and the loop overwrote it on the next frame. `boardGeneration`
+now fences it.
 
-- `const settings = data.settings` is the same object the whole app saves, and
-  nine separate `storage.save(data)` calls will persist a session override the
-  moment anything else is written.
-- `settings.mode` is read in ten places, so a session-only mode means either a
-  `sessionMode` accessor threaded through those reads, or splitting `settings`
-  into a session copy plus an explicit `saveSettings()` write-through.
+`stopSpin()` was not the problem and never was: drag inertia is separate state
+and was always cleared correctly. Measured by fingerprinting a scanline of the
+canvas after a reset — an idle board is byte-identical frame to frame, a clean
+reset shows one change (the snap), and a reset with a hint in flight showed five
+changes over ~300ms. After the fix it shows one.
 
-The second question is what the mode chips in Settings should show while a
-shortcut launch is active: the persisted preference, or the mode actually being
-played. The two options above answer that differently.
+Still open, and a matter of taste rather than a defect: reset **snaps** the globe
+to the default orientation with no easing, and it is the only camera move in the
+game that does not ease. Belongs with sub-project 3, Feel.
 
-There is also a case for deleting `?new=1` from `manifest.webmanifest` instead
-of honouring it: the app always starts a new game on launch, so the shortcut
-does nothing the plain icon does not already do.
+**Nothing changes visually above some board size. Cause found, not fixed —
+it needs a design decision.** It is *not* the label cutoff. `drawLabels =
+cellPixels > 11` never binds at any board the game can produce: at the 4002-cell
+ceiling on a 430px-wide phone `cellPixels` is 13.7 and the face-on label is
+9.8px, both above their thresholds. Zoom only raises them. That whole line of
+enquiry was wrong.
 
-### Noticed while playing, not yet investigated (2026-09-15)
+The real cause is `renderer.bodyForBoard`, which gives a custom board the body
+of the nearest preset by cell count. The largest preset is Sun at 812 cells, so
+**every custom board from 652 cells to the 4002 ceiling is Sun** — same surface,
+sky, halo and light. Verified in a browser: 812 and 4002 are visibly the same
+world at different cell densities. Since the ceiling was raised to 4002, that is
+most of the custom range rendered as one place, which is exactly what "nothing
+changes above some size" looks like.
 
-- **The reset button restores the board oddly.** Andreas's words: "resets the
-  board back weirdly, but it might just be the way I put it." Not reproduced or
-  characterised yet. Start by watching what the refresh control in the HUD does
-  to `current` and to the renderer's orientation, and whether `spinTo` is still
-  animating into the old board when the new one arrives (there is a known
-  ~420ms overlap, listed under the earlier out-of-scope observations).
-- **Nothing changes visually above some board size.** Likely the label cutoff at
-  `js/renderer.js` (`drawLabels = cellPixels > 11`), which silently stops drawing
-  numbers once cells get small, but it may also be the body surface losing
-  definition when features fall below one cell. Worth checking both, and whether
-  the threshold should depend on zoom rather than being fixed.
+Options, none chosen: add one or two bodies beyond Sun so the range keeps
+resolving; scale an existing body's treatment by cell count so Sun at 4002 does
+not read as Sun at 812; or accept it and say so in the UI. The first is the only
+one that makes a 4002-cell board feel like its own place.
 
 ### Reported but not verified
 

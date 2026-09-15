@@ -157,6 +157,13 @@ arithmetic, the guarantee that generated boards really are guess-free, and the
 game rules — cascades, flags, chording, wins, rewind, seeded boards, and the
 promise that a hint never points at a mine it called safe.
 
+It also covers delivery, against a fake Cache Storage and a fake network: that a
+pushed fix reaches a browser which already has the game, that offline play
+survives a failed refresh, and that an interrupted refresh can never leave half
+of one version beside half of another. The fake network models a browser's
+per-host connection limit, because without that it cheerfully passes a worker
+that deadlocks on a real one.
+
 ## Layout
 
 ```

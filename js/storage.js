@@ -81,6 +81,19 @@
     }
   }
 
+  /* The mode this launch plays. A shortcut decides that and nothing else: it
+   * never becomes the stored preference, so the plain icon keeps launching
+   * whatever was last chosen in Settings. An unrecognised value falls back to
+   * the preference rather than being trusted, because the query string is the
+   * one part of the launch anybody can write. That check is hasOwnProperty and
+   * not a plain lookup: every object answers to 'constructor' and 'toString',
+   * so `knownModes[wanted]` would wave those through. */
+  function modeForLaunch(settings, search, knownModes) {
+    const wanted = launchOverrides(search).mode;
+    const known = wanted && Object.prototype.hasOwnProperty.call(knownModes, wanted);
+    return known ? wanted : settings.mode;
+  }
+
   /* Whether a finished game may set a personal best. The UI promises the daily
    * is "one ranked attempt", so the daily history is the authority on that
    * rather than anything the caller tracks; and a board the generator gave up
@@ -102,6 +115,7 @@
 
   global.GS = global.GS || {};
   global.GS.storage = {
-    load, save, recordResult, isRanked, launchOverrides, todayKey, DEFAULT_SETTINGS, KEY
+    load, save, recordResult, isRanked, launchOverrides, modeForLaunch, todayKey,
+    DEFAULT_SETTINGS, KEY
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

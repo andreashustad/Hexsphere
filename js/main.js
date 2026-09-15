@@ -27,6 +27,20 @@
   const data = storage.load();
   const settings = data.settings;
 
+  /* What this launch is playing, which is not always what is stored. A
+   * home-screen shortcut picks a mode for one launch only: settings is the
+   * same object every storage.save(data) writes, so putting the shortcut's
+   * mode there meant one tap on Daily turned every later launch from the plain
+   * icon into a daily, on a board size the player never chose. Everything that
+   * asks what is being played reads sessionMode; the stored settings.mode is
+   * the preference, and only an explicit choice in Settings changes it. */
+  let sessionMode = settings.mode;
+
+  /* Bumped by every newGame. Anything that animates across frames captures it
+   * and stops when it no longer matches, so an animation started for one board
+   * cannot go on driving the next one. */
+  let boardGeneration = 0;
+
   const el = {
     canvas: $('globe'),
     mines: $('stat-mines'),
@@ -112,7 +126,7 @@
   }
 
   function currentPlan() {
-    if (settings.mode === 'daily') return dailyPlan(storage.todayKey());
+    if (sessionMode === 'daily') return dailyPlan(storage.todayKey());
     const pick = difficultyById(settings.difficulty);
     const level = solver.levelFor(settings.level);
     const frequency = pick.id === 'custom'
@@ -132,7 +146,7 @@
   /* The level is part of the key: a Hard time must never compete with a Gentle
    * one. Custom keys on its cell count for the same reason. */
   function recordKey(plan) {
-    if (settings.mode === 'daily') return 'daily';
+    if (sessionMode === 'daily') return 'daily';
     const size = plan.difficulty.id === 'custom'
       ? 'custom:' + plan.sphere.count
       : plan.difficulty.id;
@@ -141,6 +155,7 @@
 
   function newGame() {
     const plan = currentPlan();
+    boardGeneration += 1;
     clearTimeout(endTimer);
     endTimer = 0;
     current = {
@@ -150,7 +165,7 @@
         mineCount: plan.mineCount,
         seed: plan.seed,
         noGuess: settings.noGuess,
-        allowRewind: settings.mode === 'casual',
+        allowRewind: sessionMode === 'casual',
         /* The level decides how much the first click may hand over, and how
          * long the generator may spend chasing a guess-free board before it
          * gives you one that might need a guess. */
@@ -184,7 +199,7 @@
 
     hideResult();
     el.tag.textContent = plan.difficulty.label + ' · ' + plan.sphere.count + ' cells' +
-      (settings.mode === 'daily' ? ' · daily ' + storage.todayKey() : '');
+      (sessionMode === 'daily' ? ' · daily ' + storage.todayKey() : '');
     lastTimeText = lastMineText = '';
     updateHud(true);
     updateHintButton();
@@ -313,13 +328,24 @@
     toast(hint.message || 'Nothing to suggest.', hint.kind === 'guess' ? 'bad' : 'good');
   }
 
-  /* Ease the globe round so a cell comes to the front. */
+  /* Ease the globe round so a cell comes to the front.
+   *
+   * The loop drives renderer.state.orientation for 420ms from a start and a
+   * target captured when it began, so it outlives the board it was started for.
+   * Hint and then New game inside that window, and the fresh board spent the
+   * rest of the window rotating to the old board's hint cell — newGame assigns
+   * the orientation once, and this overwrote it on the very next frame.
+   * stopSpin does not cover it: that clears drag inertia, which is separate
+   * state. So the loop checks it is still animating the board it was asked
+   * about, which is what boardGeneration is for. */
   function spinTo(cell) {
     const target = renderer.orientationFacing(cell);
     const from = renderer.state.orientation;
     const startedAt = performance.now();
+    const generation = boardGeneration;
     controls && controls.stopSpin();
     (function step() {
+      if (generation !== boardGeneration) return;
       const t = clamp((performance.now() - startedAt) / 420, 0, 1);
       const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
       renderer.state.orientation = Q.slerp(from, target, eased);
@@ -337,7 +363,7 @@
     /* Read the rule before the daily history is written below, or today's own
      * attempt would count as the replay that disqualifies it. */
     const ranked = storage.isRanked(data, {
-      mode: settings.mode,
+      mode: sessionMode,
       rewound: current.rewound,
       hintsUsed: g.hintsUsed,
       guaranteed: g.guaranteed
@@ -347,7 +373,7 @@
     if (!current.recorded) {
       current.recorded = true;
       isBest = storage.recordResult(data, recordKey(plan), won, g.elapsed(), { ranked: ranked });
-      if (settings.mode === 'daily') {
+      if (sessionMode === 'daily') {
         data.daily[storage.todayKey()] = {
           won, time: g.elapsed(), hints: g.hintsUsed, cells: plan.sphere.count
         };
@@ -426,7 +452,7 @@
       b.innerHTML = d.label + '<small>' + cells + '</small>';
       b.addEventListener('click', function () {
         settings.difficulty = d.id;
-        if (settings.mode === 'daily') setMode('classic');
+        if (sessionMode === 'daily') setMode('classic');
         storage.save(data);
         buildDifficultyChips();
         $('custom-box').hidden = d.id !== 'custom';
@@ -490,8 +516,11 @@
     if (meta) meta.setAttribute('content', theme.background[0]);
   }
 
-  function setMode(mode) {
-    settings.mode = mode;
+  /* Show what is being played. Separate from setMode because a shortcut launch
+   * has to display its mode without that display recording a preference. The
+   * chips therefore always show the mode actually in play, and touching one is
+   * what makes it the stored choice. */
+  function showMode(mode) {
     document.querySelectorAll('#mode-chips .chip').forEach(function (c) {
       c.classList.toggle('is-active', c.dataset.mode === mode);
     });
@@ -504,6 +533,14 @@
       }
     }
     $('mode-note').textContent = note;
+  }
+
+  /* An explicit choice: this launch changes and so does what the plain icon
+   * will launch next time. */
+  function setMode(mode) {
+    sessionMode = mode;
+    settings.mode = mode;
+    showMode(mode);
     storage.save(data);
   }
 
@@ -656,18 +693,12 @@
     requestAnimationFrame(loop);
   }
 
-  /* Home-screen shortcuts land here: ?mode=daily or ?new=1.
-   *
-   * KNOWN BUG, see BACKLOG item 6: the mode is still written into settings and
-   * persisted, so one tap on the Daily shortcut changes every later normal
-   * launch. Parsing now goes through the tested storage.launchOverrides, but
-   * the fix needs a decision about where a session-only mode should live,
-   * because settings.mode is read in ten places and data.settings is the same
-   * object the whole app saves. */
+  /* Home-screen shortcuts land here: ?mode=daily or ?new=1. They choose what
+   * this launch plays and write nothing, which is the whole distinction
+   * sessionMode exists for. ?new=1 needs no handling: a launch always starts a
+   * new game anyway. */
   function applyLaunchParams() {
-    const wanted = storage.launchOverrides(location.search);
-    if (wanted.mode && MODE_NOTES[wanted.mode]) settings.mode = wanted.mode;
-    storage.save(data);
+    sessionMode = storage.modeForLaunch(settings, location.search, MODE_NOTES);
   }
 
   function start() {
@@ -690,7 +721,7 @@
     buildLevelChips();
     buildDifficultyChips();
     buildThemeChips();
-    setMode(settings.mode);
+    showMode(sessionMode);
     renderStats();
     newGame();
 
