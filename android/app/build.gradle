@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+/* The game is not copied into this project. It lives at the repository root
+ * and is gathered into the build directory at build time, so the repo only
+ * ever holds one copy of it. */
+def bundledWeb = layout.buildDirectory.dir('generated/web').get().asFile
+
+tasks.register('bundleWebApp', Sync) {
+    from(rootProject.file('..')) {
+        include 'index.html'
+        include 'styles.css'
+        include 'sw.js'
+        include 'manifest.webmanifest'
+        include 'js/**'
+        include 'icons/**'
+    }
+    into bundledWeb
+}
+
+tasks.named('preBuild') {
+    dependsOn 'bundleWebApp'
+}
+
+android {
+    namespace 'com.andreashustad.vibemine'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.andreashustad.vibemine"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += [bundledWeb]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    /* WebViewAssetLoader serves the assets over a real https origin, so
+     * localStorage (settings, records) behaves exactly as it does in a
+     * browser. Loading from file:// does not reliably give you that. */
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

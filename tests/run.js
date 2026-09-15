@@ -1,0 +1,529 @@
+#!/usr/bin/env node
+/* VibeMine test suite. Run with: node tests/run.js
+ *
+ * The game modules are plain browser scripts, so they are loaded into a fake
+ * global here rather than imported. */
+'use strict';
+
+const path = require('path');
+const vm = require('vm');
+const fs = require('fs');
+
+const sandbox = { performance: { now: () => Date.now() } };
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+
+/* localStorage stub, so the storage module can be exercised too. */
+const store = new Map();
+sandbox.localStorage = {
+  getItem: (k) => (store.has(k) ? store.get(k) : null),
+  setItem: (k, v) => store.set(k, String(v)),
+  removeItem: (k) => store.delete(k)
+};
+
+vm.createContext(sandbox);
+for (const name of ['util', 'geometry', 'solver', 'game', 'storage']) {
+  const file = path.join(__dirname, '..', 'js', name + '.js');
+  vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
+}
+
+const GS = sandbox.GS;
+const { buildSphere, cellCountFor, frequencyForCells } = GS.geometry;
+const { makeRng, V } = GS.util;
+
+/* ---- tiny test harness ------------------------------------------------- */
+
+const GREEN = '\x1b[32m';
+const RED = '\x1b[31m';
+const OFF = '\x1b[0m';
+
+let passed = 0;
+const failures = [];
+let group = '';
+
+function describe(name, fn) {
+  group = name;
+  console.log('\n' + name);
+  fn();
+}
+
+function it(name, fn) {
+  try {
+    fn();
+    passed++;
+    console.log('  ' + GREEN + 'ok' + OFF + '   ' + name);
+  } catch (err) {
+    failures.push({ name: group + ' > ' + name, err });
+    console.log('  ' + RED + 'FAIL' + OFF + ' ' + name + '\n       ' + err.message);
+  }
+}
+
+function assert(cond, message) {
+  if (!cond) throw new Error(message || 'assertion failed');
+}
+
+function equal(actual, expected, message) {
+  if (actual !== expected) {
+    throw new Error((message || 'values differ') + ': expected ' + expected + ', got ' + actual);
+  }
+}
+
+/* ---- geometry ----------------------------------------------------------- */
+
+describe('geometry', function () {
+  it('produces 10f^2 + 2 cells at every frequency', function () {
+    for (let f = 1; f <= 8; f++) {
+      equal(buildSphere(f).count, cellCountFor(f), 'cell count at f=' + f);
+    }
+  });
+
+  it('is always twelve pentagons and the rest hexagons', function () {
+    for (const f of [2, 3, 5, 7]) {
+      const sphere = buildSphere(f);
+      let pent = 0;
+      let hex = 0;
+      for (let i = 0; i < sphere.count; i++) {
+        const sides = sphere.cellCorners[i].length;
+        if (sides === 5) pent++;
+        else if (sides === 6) hex++;
+        else throw new Error('cell ' + i + ' has ' + sides + ' sides at f=' + f);
+      }
+      equal(pent, 12, 'pentagons at f=' + f);
+      equal(hex, sphere.count - 12, 'hexagons at f=' + f);
+    }
+  });
+
+  it('gives every cell as many neighbours as it has sides', function () {
+    const sphere = buildSphere(4);
+    for (let i = 0; i < sphere.count; i++) {
+      equal(sphere.neighbors[i].length, sphere.cellCorners[i].length, 'degree of cell ' + i);
+    }
+  });
+
+  it('has symmetric adjacency with no self-links or duplicates', function () {
+    const sphere = buildSphere(5);
+    for (let i = 0; i < sphere.count; i++) {
+      const seen = new Set();
+      for (const j of sphere.neighbors[i]) {
+        assert(j !== i, 'cell ' + i + ' lists itself');
+        assert(!seen.has(j), 'duplicate neighbour in cell ' + i);
+        seen.add(j);
+        assert(sphere.neighbors[j].includes(i), 'adjacency not symmetric between ' + i + ' and ' + j);
+      }
+    }
+  });
+
+  it('is one connected surface', function () {
+    const sphere = buildSphere(4);
+    const seen = new Uint8Array(sphere.count);
+    const stack = [0];
+    seen[0] = 1;
+    let n = 1;
+    while (stack.length) {
+      for (const j of sphere.neighbors[stack.pop()]) {
+        if (!seen[j]) { seen[j] = 1; n++; stack.push(j); }
+      }
+    }
+    equal(n, sphere.count, 'cells reachable from cell 0');
+  });
+
+  it('keeps every centre and corner on the unit sphere', function () {
+    const sphere = buildSphere(3);
+    for (let i = 0; i < sphere.count; i++) {
+      const len = Math.hypot(sphere.centers[i * 3], sphere.centers[i * 3 + 1], sphere.centers[i * 3 + 2]);
+      assert(Math.abs(len - 1) < 1e-6, 'centre ' + i + ' has length ' + len);
+    }
+    for (let c = 0; c < sphere.corners.length; c += 3) {
+      const len = Math.hypot(sphere.corners[c], sphere.corners[c + 1], sphere.corners[c + 2]);
+      assert(Math.abs(len - 1) < 1e-5, 'corner at ' + c + ' has length ' + len);
+    }
+  });
+
+  it('winds every cell the same way, seen from outside', function () {
+    const sphere = buildSphere(3);
+    for (let i = 0; i < sphere.count; i++) {
+      const ring = sphere.cellCorners[i];
+      const centre = [sphere.centers[i * 3], sphere.centers[i * 3 + 1], sphere.centers[i * 3 + 2]];
+      let normal = [0, 0, 0];
+      for (let k = 0; k < ring.length; k++) {
+        const a = ring[k];
+        const b = ring[(k + 1) % ring.length];
+        const pa = [sphere.corners[a * 3], sphere.corners[a * 3 + 1], sphere.corners[a * 3 + 2]];
+        const pb = [sphere.corners[b * 3], sphere.corners[b * 3 + 1], sphere.corners[b * 3 + 2]];
+        normal = V.add(normal, V.cross(pa, pb));
+      }
+      assert(V.dot(normal, centre) > 0, 'cell ' + i + ' is wound the wrong way');
+    }
+  });
+
+  it('places the corners of a cell evenly around it', function () {
+    const sphere = buildSphere(4);
+    for (let i = 0; i < sphere.count; i += 7) {
+      const centre = [sphere.centers[i * 3], sphere.centers[i * 3 + 1], sphere.centers[i * 3 + 2]];
+      for (const t of sphere.cellCorners[i]) {
+        const corner = [sphere.corners[t * 3], sphere.corners[t * 3 + 1], sphere.corners[t * 3 + 2]];
+        const angle = Math.acos(Math.min(1, V.dot(centre, corner)));
+        assert(angle < sphere.cellRadius * 1.25 && angle > sphere.cellRadius * 0.75,
+          'corner distance ' + angle + ' vs radius ' + sphere.cellRadius);
+      }
+    }
+  });
+
+  it('maps a requested cell count to the smallest frequency that fits', function () {
+    equal(frequencyForCells(92), 3, 'exact fit');
+    equal(frequencyForCells(93), 4, 'one over');
+    assert(cellCountFor(frequencyForCells(1000)) >= 1000, 'covers the request');
+  });
+});
+
+/* ---- solver -------------------------------------------------------------- */
+
+describe('solver', function () {
+  const S = GS.solver;
+
+  function viewOf(sphere, mines, revealedCells, flaggedCells) {
+    const adj = S.adjacencyCounts(sphere, mines);
+    const view = S.createView(sphere.count);
+    for (const c of revealedCells) { view.revealed[c] = 1; view.counts[c] = adj[c]; }
+    for (const c of flaggedCells || []) view.flagged[c] = 1;
+    return view;
+  }
+
+  it('calls the neighbours of a zero safe', function () {
+    const sphere = buildSphere(3);
+    const mines = new Uint8Array(sphere.count);
+    mines[50] = 1;
+    const view = viewOf(sphere, mines, [0], []);
+    const step = S.deduce(sphere, view, 1, { useExhaustive: false });
+    for (const n of sphere.neighbors[0]) assert(step.safe.includes(n), 'neighbour ' + n + ' should be safe');
+  });
+
+  it('flags when a number has exactly as many unknowns as mines', function () {
+    const sphere = buildSphere(3);
+    const mines = new Uint8Array(sphere.count);
+    const cell = 0;
+    const nb = sphere.neighbors[cell];
+    for (const n of nb) mines[n] = 1;
+    const view = viewOf(sphere, mines, [cell], []);
+    const step = S.deduce(sphere, view, nb.length, { useExhaustive: false });
+    for (const n of nb) assert(step.mines.includes(n), 'neighbour ' + n + ' should be a known mine');
+  });
+
+  it('uses the remaining-mine count to finish a board', function () {
+    const sphere = buildSphere(3);
+    const mines = new Uint8Array(sphere.count);
+    mines[7] = 1;
+    const revealed = [];
+    for (let i = 0; i < sphere.count; i++) if (i !== 7 && i !== 8) revealed.push(i);
+    const view = viewOf(sphere, mines, revealed, [7]);
+    const step = S.deduce(sphere, view, 1, { useExhaustive: false });
+    assert(step.safe.includes(8), 'the last cell must be safe once every mine is flagged');
+  });
+
+  it('never claims a safe cell that holds a mine', function () {
+    const sphere = buildSphere(4);
+    for (let seed = 0; seed < 12; seed++) {
+      const rng = makeRng('solver-safety-' + seed);
+      const start = rng.int(sphere.count);
+      const mineCount = 30;
+      const built = S.generateBoard(sphere, mineCount, start, rng, { noGuess: false });
+      const adj = S.adjacencyCounts(sphere, built.field);
+      const view = S.createView(sphere.count);
+      S.revealInto(sphere, built.field, adj, view, start, null);
+      for (let round = 0; round < 40; round++) {
+        const step = S.deduce(sphere, view, mineCount, {});
+        if (!step.safe.length && !step.mines.length) break;
+        for (const c of step.safe) {
+          assert(!built.field[c], 'solver called cell ' + c + ' safe but it is a mine');
+          S.revealInto(sphere, built.field, adj, view, c, null);
+        }
+        for (const c of step.mines) {
+          assert(built.field[c], 'solver called cell ' + c + ' a mine but it is safe');
+          view.flagged[c] = 1;
+        }
+      }
+    }
+  });
+
+  it('computes exact probabilities that account for every remaining mine', function () {
+    const sphere = buildSphere(4);
+    let checked = 0;
+    for (let seed = 0; seed < 200 && checked < 3; seed++) {
+      const rng = makeRng('probability-' + seed);
+      const mineCount = Math.round(sphere.count * 0.34);
+      const start = rng.int(sphere.count);
+      const built = S.generateBoard(sphere, mineCount, start, rng, { noGuess: false });
+      const result = S.solveBoard(sphere, built.field, mineCount, start);
+      if (result.solved || !result.stuck || !result.stuck.probabilities) continue;
+      checked++;
+      let flagged = 0;
+      for (let i = 0; i < sphere.count; i++) if (result.view.flagged[i]) flagged++;
+      let sum = 0;
+      for (const [, p] of result.stuck.probabilities) sum += p;
+      assert(Math.abs(sum - (mineCount - flagged)) < 1e-6,
+        'probabilities sum to ' + sum + ', expected ' + (mineCount - flagged));
+      for (const [cell, p] of result.stuck.probabilities) {
+        assert(p >= -1e-9 && p <= 1 + 1e-9, 'probability out of range for cell ' + cell);
+      }
+    }
+    assert(checked > 0, 'no guess-required board was produced to check');
+  });
+
+  it('keeps the opening move and its neighbours clear of mines', function () {
+    const sphere = buildSphere(4);
+    for (let seed = 0; seed < 8; seed++) {
+      const rng = makeRng('opening-' + seed);
+      const start = rng.int(sphere.count);
+      const built = S.generateBoard(sphere, 30, start, rng, {});
+      assert(!built.field[start], 'the first cell must be safe');
+      for (const n of sphere.neighbors[start]) {
+        assert(!built.field[n], 'neighbour ' + n + ' of the opening must be safe');
+      }
+    }
+  });
+
+  it('generates boards that can be finished without guessing', function () {
+    const cases = [
+      { frequency: 3, density: 0.155 },
+      { frequency: 4, density: 0.175 },
+      { frequency: 5, density: 0.19 },
+      { frequency: 7, density: 0.2 }
+    ];
+    for (const c of cases) {
+      const sphere = buildSphere(c.frequency);
+      const mineCount = Math.round(sphere.count * c.density);
+      for (let seed = 0; seed < 5; seed++) {
+        const rng = makeRng('noguess-' + c.frequency + '-' + seed);
+        const start = rng.int(sphere.count);
+        const built = S.generateBoard(sphere, mineCount, start, rng, {});
+        assert(built.guaranteed, 'no guess-free board found at f=' + c.frequency + ' seed ' + seed);
+        const check = S.solveBoard(sphere, built.field, mineCount, start);
+        assert(check.solved, 'generated board is not actually solvable at f=' + c.frequency);
+        let placed = 0;
+        for (let i = 0; i < sphere.count; i++) if (built.field[i]) placed++;
+        equal(placed, mineCount, 'mines placed');
+      }
+    }
+  });
+});
+
+/* ---- game ---------------------------------------------------------------- */
+
+describe('game', function () {
+  const sphere = buildSphere(4);
+
+  function fresh(overrides) {
+    return GS.game.createGame(Object.assign({
+      sphere, mineCount: 28, seed: 'test-seed', noGuess: true
+    }, overrides));
+  }
+
+  function firstHidden(g) {
+    for (let i = 0; i < sphere.count; i++) if (!g.revealed[i]) return i;
+    return -1;
+  }
+  function firstMine(g) {
+    for (let i = 0; i < sphere.count; i++) if (g.mines[i]) return i;
+    return -1;
+  }
+  function findNumberedCell(g) {
+    for (let i = 0; i < sphere.count; i++) if (g.revealed[i] && g.adjacency[i] > 0) return i;
+    return -1;
+  }
+  function findNumberedCellWithClosedNeighbours(g) {
+    for (let i = 0; i < sphere.count; i++) {
+      if (!g.revealed[i] || g.adjacency[i] <= 0) continue;
+      const closed = sphere.neighbors[i].filter((n) => !g.revealed[n]);
+      if (closed.length > g.adjacency[i]) return i;
+    }
+    return -1;
+  }
+
+  it('places no mines until the first move', function () {
+    const g = fresh();
+    equal(g.state, 'ready', 'state before the first move');
+    let mines = 0;
+    for (let i = 0; i < sphere.count; i++) mines += g.mines[i];
+    equal(mines, 0, 'mines before the first move');
+  });
+
+  it('opens a pocket on the first tap, never a mine', function () {
+    for (let seed = 0; seed < 6; seed++) {
+      const g = fresh({ seed: 'first-tap-' + seed });
+      const cell = (seed * 17) % sphere.count;
+      const result = g.reveal(cell);
+      equal(g.state, 'playing', 'state after the first tap');
+      equal(g.adjacency[cell], 0, 'the opening cell touches no mines');
+      assert(result.opened.length > sphere.neighbors[cell].length, 'the opening should cascade');
+      equal(result.exploded, -1, 'the first tap can never explode');
+    }
+  });
+
+  it('counts flags and refuses to open a flagged cell', function () {
+    const g = fresh();
+    g.reveal(0);
+    const hidden = firstHidden(g);
+    g.toggleFlag(hidden, false);
+    equal(g.flagCount, 1, 'flag count');
+    equal(g.remainingMines(), g.mineCount - 1, 'mines remaining readout');
+    const blocked = g.reveal(hidden);
+    equal(blocked.ok, false, 'a flagged cell stays closed');
+    g.toggleFlag(hidden, false);
+    equal(g.flagCount, 0, 'flag removed');
+  });
+
+  it('cycles through question marks only when asked', function () {
+    const g = fresh();
+    g.reveal(0);
+    const hidden = firstHidden(g);
+    g.toggleFlag(hidden, true);
+    equal(g.flags[hidden], 1, 'first press flags');
+    g.toggleFlag(hidden, true);
+    equal(g.flags[hidden], 2, 'second press marks it uncertain');
+    g.toggleFlag(hidden, true);
+    equal(g.flags[hidden], 0, 'third press clears');
+  });
+
+  it('opens around a satisfied number and refuses an unsatisfied one', function () {
+    const g = fresh({ seed: 'chord' });
+    g.reveal(0);
+    const target = findNumberedCellWithClosedNeighbours(g);
+    assert(target >= 0, 'needed a revealed number with closed neighbours');
+    const before = g.revealedCount;
+    const bad = g.chord(target);
+    equal(bad.ok, false, 'chording before the flags are placed does nothing');
+    for (const n of sphere.neighbors[target]) if (g.mines[n]) g.toggleFlag(n, false);
+    const good = g.chord(target);
+    assert(good.ok !== false && g.revealedCount > before, 'chording should open the rest');
+    equal(good.exploded, -1, 'a correctly flagged chord never explodes');
+  });
+
+  it('explodes when a chord is built on a wrong flag', function () {
+    const g = fresh({ seed: 'bad-chord' });
+    g.reveal(0);
+    const target = findNumberedCell(g);
+    const neighbours = sphere.neighbors[target];
+    let flags = 0;
+    for (const n of neighbours) {
+      if (!g.revealed[n] && flags < g.adjacency[target]) { g.toggleFlag(n, false); flags++; }
+    }
+    const wrong = neighbours.some((n) => g.flags[n] === 1 && !g.mines[n]);
+    const result = g.chord(target);
+    if (wrong) {
+      equal(g.state, 'lost', 'a chord on a wrong flag loses');
+      assert(result.exploded >= 0, 'the exploded cell is reported');
+    }
+  });
+
+  it('wins when every safe cell is open, and flags the rest', function () {
+    const g = fresh({ seed: 'win' });
+    g.reveal(0);
+    const S = GS.solver;
+    for (let round = 0; round < 500 && g.state === 'playing'; round++) {
+      const view = S.createView(sphere.count);
+      for (let i = 0; i < sphere.count; i++) {
+        view.revealed[i] = g.revealed[i];
+        view.flagged[i] = g.flags[i] === 1 ? 1 : 0;
+        view.counts[i] = g.revealed[i] ? g.adjacency[i] : -1;
+      }
+      const step = S.deduce(sphere, view, g.mineCount, {});
+      if (!step.safe.length && !step.mines.length) break;
+      for (const c of step.mines) if (g.flags[c] !== 1) g.toggleFlag(c, false);
+      for (const c of step.safe) g.reveal(c);
+    }
+    equal(g.state, 'won', 'final state');
+    equal(g.revealedCount, g.safeCells, 'every safe cell opened');
+    equal(g.flagCount, g.mineCount, 'every mine flagged at the end');
+    assert(g.elapsed() >= 0, 'elapsed time is recorded');
+  });
+
+  it('only ever hints at cells that are provable', function () {
+    for (let seed = 0; seed < 6; seed++) {
+      const g = fresh({ seed: 'hint-' + seed });
+      g.reveal((seed * 11) % sphere.count);
+      for (let round = 0; round < 300 && g.state === 'playing'; round++) {
+        const hint = g.hint();
+        if (hint.kind === 'safe') {
+          assert(!g.mines[hint.cells[0]], 'hinted a "safe" cell that is a mine');
+          g.reveal(hint.cells[0]);
+        } else if (hint.kind === 'mine') {
+          assert(g.mines[hint.cells[0]], 'hinted a "mine" that is safe');
+          g.toggleFlag(hint.cells[0], false);
+        } else break;
+      }
+      equal(g.state, 'won', 'following only certain hints should win a guess-free board');
+    }
+  });
+
+  it('rewinds a fatal move in casual mode only', function () {
+    const strict = fresh({ seed: 'rewind', allowRewind: false });
+    strict.reveal(0);
+    strict.reveal(firstMine(strict));
+    equal(strict.state, 'lost', 'classic mode loses');
+    equal(strict.rewind(), false, 'classic mode cannot rewind');
+
+    const casual = fresh({ seed: 'rewind', allowRewind: true });
+    casual.reveal(0);
+    const openBefore = casual.revealedCount;
+    const casualMine = firstMine(casual);
+    casual.reveal(casualMine);
+    equal(casual.state, 'lost', 'casual mode still loses the move');
+    equal(casual.rewind(), true, 'casual mode can step back');
+    equal(casual.state, 'playing', 'play resumes');
+    equal(casual.revealedCount, openBefore, 'the board is restored');
+    equal(casual.flags[casualMine], 1, 'the mine is flagged after a rewind');
+    equal(casual.mistakes, 1, 'the mistake is counted');
+  });
+
+  it('builds an identical board from an identical seed', function () {
+    const a = GS.game.createGame({ sphere, mineCount: 28, seed: 'daily-2026-01-01' });
+    const b = GS.game.createGame({ sphere, mineCount: 28, seed: 'daily-2026-01-01' });
+    a.openAt(42);
+    b.openAt(42);
+    for (let i = 0; i < sphere.count; i++) {
+      equal(a.mines[i], b.mines[i], 'mine at ' + i + ' differs between two runs of the same seed');
+    }
+    equal(a.revealedCount, b.revealedCount, 'the same opening');
+  });
+});
+
+/* ---- storage -------------------------------------------------------------- */
+
+describe('storage', function () {
+  it('starts from defaults and round-trips through localStorage', function () {
+    store.clear();
+    const data = GS.storage.load();
+    equal(data.settings.difficulty, 'earth', 'default difficulty');
+    data.settings.theme = 'vivid';
+    GS.storage.save(data);
+    equal(GS.storage.load().settings.theme, 'vivid', 'saved setting survives a reload');
+  });
+
+  it('tracks bests, win rate and streaks', function () {
+    store.clear();
+    const data = GS.storage.load();
+    assert(GS.storage.recordResult(data, 'earth', true, 45000), 'a first win is a personal best');
+    assert(!GS.storage.recordResult(data, 'earth', true, 60000), 'a slower win is not');
+    assert(GS.storage.recordResult(data, 'earth', true, 30000), 'a faster win is');
+    GS.storage.recordResult(data, 'earth', false, 12000);
+    equal(data.records.earth.played, 4, 'games played');
+    equal(data.records.earth.won, 3, 'games won');
+    equal(data.records.earth.best, 30000, 'best time');
+    equal(data.totals.streak, 0, 'a loss resets the streak');
+    equal(data.totals.bestStreak, 3, 'best streak remembered');
+  });
+
+  it('formats the date key as an ISO date', function () {
+    equal(GS.storage.todayKey(new Date(2026, 0, 5)), '2026-01-05', 'zero padding');
+  });
+});
+
+/* ---- summary --------------------------------------------------------------- */
+
+console.log('');
+if (failures.length) {
+  console.log(RED + failures.length + ' failing' + OFF + ', ' + passed + ' passing\n');
+  for (const f of failures) console.log('  ' + f.name + '\n    ' + (f.err.stack || f.err.message) + '\n');
+  process.exit(1);
+}
+console.log(GREEN + 'all ' + passed + ' tests passing' + OFF + '\n');
