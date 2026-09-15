@@ -667,11 +667,13 @@ describe('taps', function () {
     let seq = 1;
     const timers = new Map();
     const revealed = new Set(revealedCells || []);
+    const announced = [];
     const tap = makeTapHandler({
       isRevealed: (cell) => revealed.has(cell),
       onChord: (cell) => log.push('chord:' + cell),
       onFlag: (cell) => log.push('flag:' + cell),
-      onOpen: (cell) => log.push('open:' + cell)
+      onOpen: (cell) => log.push('open:' + cell),
+      onPending: (cell) => announced.push(cell)
     }, {
       doubleTapMs: 280,
       setTimeout: (fn) => { const id = seq++; timers.set(id, fn); return id; },
@@ -680,6 +682,9 @@ describe('taps', function () {
     return {
       tap,
       log,
+      announced,
+      /* What the board would be drawing now: the last cell announced. */
+      shown: () => (announced.length ? announced[announced.length - 1] : -1),
       pending: () => timers.size,
       elapse: () => {
         const fns = Array.from(timers.values());
@@ -727,6 +732,70 @@ describe('taps', function () {
     h.tap(3);
     h.tap(8);
     equal(h.log.join(), 'flag:3,chord:8', 'two different intentions, both honoured');
+  });
+
+  /* The wait is unavoidable for a lone tap, but a wait nobody is told about is
+   * what reads as lag: the finger lifts and the board says nothing for a
+   * quarter of a second. The handler therefore names the cell it is waiting on,
+   * and names -1 the instant it stops waiting, so the ring cannot outlive the
+   * window it stands for. */
+  it('says which cell it is waiting on, and says when it stops', function () {
+    const h = harness();
+    h.tap(3);
+    equal(h.shown(), 3, 'the board can show the wait while it lasts');
+    h.elapse();
+    equal(h.shown(), -1, 'and is told the moment the flag lands');
+    equal(h.log.join(), 'flag:3', 'the flag itself is unchanged');
+  });
+
+  it('withdraws the wait as soon as a second tap resolves it', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap(3);
+    equal(h.log.join(), 'open:3', 'still an open');
+    equal(h.shown(), -1, 'and nothing is left waiting on the board');
+  });
+
+  it('shows the wait moving when a tap lands on another cell', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap(8);
+    equal(h.shown(), 8, 'the new cell is the one waiting');
+    equal(h.log.join(), 'flag:3', 'and the first one flagged rather than lingering');
+  });
+
+  /* A press held past the double-tap window cannot be the first half of a
+   * double tap: the window a second tap would have to land in has already gone
+   * by while the finger was still down. So it flags with no wait at all, which
+   * is the whole answer to flagging feeling laggy. */
+  it('flags a held press at once, with no window to wait out', function () {
+    const h = harness();
+    h.tap.hold(3);
+    equal(h.log.join(), 'flag:3', 'flagged on the lift');
+    equal(h.pending(), 0, 'nothing waiting');
+    equal(h.shown(), -1, 'and no ring drawn for a wait that never happened');
+  });
+
+  it('still chords a held press on a revealed cell', function () {
+    const h = harness([7]);
+    h.tap.hold(7);
+    equal(h.log.join(), 'chord:7', 'a hold changes nothing for a revealed cell');
+  });
+
+  /* Otherwise a slow second tap would flag the cell it was meant to open, and
+   * the player would then have to unflag it to get anywhere. */
+  it('opens, rather than flagging, when the second tap is the slow one', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap.hold(3);
+    equal(h.log.join(), 'open:3', 'a held second tap is still a double tap');
+  });
+
+  it('commits a pending flag elsewhere before a held press flags its own cell', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap.hold(8);
+    equal(h.log.join(), 'flag:3,flag:8', 'both marks land, in the order they were asked for');
   });
 });
 
@@ -919,6 +988,62 @@ describe('bodies', function () {
     equal(bodyForBoard('earth', 252), BODIES.earth, 'a named size uses its own body');
   });
 
+  /* Neptune's bands sank onto the tone of an opened cell — 1.19:1, where every
+   * other body sat between 1.7 and 3.5 — and a cleared area on it became
+   * genuinely hard to find. Nothing caught it, because the fill was computed
+   * inline in the render loop where no test could reach it, and a palette that
+   * looks pleasant in isolation says nothing about the pair. cellFill exists so
+   * this test can ask the real code what a cell paints, for every combination
+   * of body, theme and surface extreme.
+   *
+   * The pairing is what matters, not the numbers: the covered surface may be
+   * any colour a body likes as long as a player can still see which cells they
+   * have opened. */
+  it('keeps every covered cell distinguishable from an opened one', function () {
+    const { cellFill } = GS.renderer;
+
+    function rgb(fill) {
+      const m = /rgb\((\d+),(\d+),(\d+)\)/.exec(fill);
+      return [Number(m[1]), Number(m[2]), Number(m[3])];
+    }
+    function relativeLuminance(c) {
+      const lin = c.map(function (v) {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+    }
+    function contrast(a, b) {
+      const la = relativeLuminance(rgb(a)), lb = relativeLuminance(rgb(b));
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    /* 1.6:1 is not a standard, it is the floor the set already holds: the
+     * darkest pairing that reads fine in play, Pebble at midnight, sits at
+     * 1.66. The two that had to be repainted were at 1.19 and 1.25, which is
+     * the difference between a dim cell and no boundary at all. */
+    const FLOOR = 1.6;
+    for (const themeId of Object.keys(THEMES)) {
+      const theme = THEMES[themeId];
+      for (const bodyId of Object.keys(BODIES)) {
+        const body = activeBody(theme, BODIES[bodyId]);
+        /* Mid-disc, mid-light, with a self-luminous body damping the lambert
+         * term exactly as render does. */
+        const lit = body && body.lightMix !== undefined ? body.lightMix : 1;
+        const lightAt = { diffuse: 0.6 * lit, limb: 0.85 };
+        const opened = cellFill(theme, body, Object.assign({ revealed: true }, lightAt));
+        /* Walk the whole surface range: a body is only as readable as its worst
+         * band, and the extremes are exactly where both failures were. */
+        for (let terrain = 0; terrain <= 1.0001; terrain += 0.05) {
+          const covered = cellFill(theme, body, Object.assign({ terrain: terrain }, lightAt));
+          const ratio = contrast(covered, opened);
+          assert(ratio >= FLOOR, themeId + ' + ' + bodyId + ' at surface ' + terrain.toFixed(2) +
+            ': a covered cell is ' + ratio.toFixed(2) + ':1 against an opened one');
+        }
+      }
+    }
+  });
+
   it('suppresses the body entirely in the high contrast theme', function () {
     equal(activeBody(THEMES.vivid, BODIES.earth), null,
       'the colour-blind palette must not be overpainted by a planet');
@@ -949,8 +1074,21 @@ describe('renderer', function () {
   });
 
   it('grows the cell to full size by the end of the wave', function () {
-    equal(revealScale(260, 0), 0.9, 'fully popped');
-    assert(revealScale(130, 0) > revealScale(0, 0), 'and grows on the way there');
+    const { REVEAL_MS } = GS.renderer;
+    equal(revealScale(REVEAL_MS, 0), 0.9, 'fully popped');
+    equal(revealScale(REVEAL_MS / 2, 0) > revealScale(0, 0), true, 'and grows on the way there');
+  });
+
+  /* The curve is a cubic ease-out, so nearly all of the travel happens in the
+   * first fifth of the duration. Tuned by duration alone the pop kept
+   * disappearing: at 260ms from 45% an opened cell was at 97% of full size
+   * after 90ms, which is not an opening, it is a jump cut. So the thing worth
+   * pinning is what is left to see once the eye has caught up, not the number
+   * in the constant. */
+  it('leaves the opening still visibly moving once the eye is on it', function () {
+    const full = revealScale(1e6, 0);
+    assert(revealScale(90, 0) < full * 0.9, 'a tenth of a second in, the cell is still visibly small');
+    assert(revealScale(0, 0) < full * 0.5, 'and it starts from well under half size');
   });
 
   /* Cells near the silhouette are foreshortened to slivers, but their numbers

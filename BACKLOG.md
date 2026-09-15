@@ -52,6 +52,42 @@ resolving; scale an existing body's treatment by cell count so Sun at 4002 does
 not read as Sun at 812; or accept it and say so in the UI. The first is the only
 one that makes a 4002-cell board feel like its own place.
 
+### Play-testing round two (2026-09-15) — all three acted on
+
+Three complaints from actually playing a couple of games. Each is sub-project 3,
+Feel, except the middle one, which was a readability defect.
+
+**Flagging felt laggy.** It was: a lone tap has to wait out the 280ms double-tap
+window, and for that whole time the board said nothing at all. The window is
+still 280ms and the open still fires on the second tap — see the gotcha, both
+are load-bearing. What changed is that the wait is now visible (a ring closing on
+the cell) and that a press held past 380ms skips the wait entirely, flagging on
+the lift. Worth watching in play: whether the hold gets discovered without being
+read about, and whether 380ms is where it wants to sit.
+
+**Hard to see which cells were open on Neptune.** Real, measurable, and not
+confined to Neptune. The trough of its bands sat at 1.19:1 against an opened
+cell, which is no boundary at all; the Sun's bright granules against Daylight
+were 1.25:1 and just as bad. Both bodies repainted, both losing some surface
+definition to get there, and opened cells now take `revealedRim` instead of the
+covered grid colour. `renderer.cellFill` was extracted so a test can sweep every
+body, theme and surface value; the floor it holds is 1.6:1.
+
+Left alone, and the one pairing still under that floor: Moon's pentagon marker
+against an opened cell in Daylight, at 1.58:1. A pentagon has a different job —
+it has to stand out from *its own neighbours* — and pulling it down to clear the
+floor would push it into the middle of the Moon's own crater range, where it
+stops marking anything. The guard therefore sweeps the surface range only. If it
+ever bites in play, the fix is a Moon-specific pentagon colour, not a threshold.
+
+**Opening a cell sometimes felt too snappy.** The reveal is a cubic ease-out, so
+nearly all the travel happens in the first fifth of the duration: at 260ms from
+45% a cell was at 97% of full size after 90ms, which is a jump cut rather than an
+opening. Now 340ms from 34%. The cascade is unaffected — its pace comes from the
+per-level stamp in `markRevealed`, not from this. The test pins what is left to
+see rather than the constant, because tuning by duration alone is what let the
+pop disappear in the first place.
+
 ### Reported but not verified
 
 Three findings from the same review that were never checked against the code.

@@ -102,6 +102,31 @@ open also fires on the second tap rather than when the window closes. Do not
 "simplify" either of those away, and do not switch to flagging optimistically
 and undoing it: that flashes a flag on every cell you open, cascades included.
 
+That leaves a lone tap — a flag — as the one action that pays the wait, and
+play-testing on 2026-09-15 called it laggy. Two things answer it and neither
+shortens the window. A press held past `HOLD_FLAG_MS` flags on the lift with no
+wait at all, because a second tap would have had to land inside a window that
+went by while the finger was still down; keep that threshold comfortably *above*
+`DOUBLE_TAP_MS` or the two gestures start to overlap and a slow double tap flags
+the cell it meant to open. And `onPending` names the cell being waited on, so the
+renderer can close a ring on it: the wait was never really the problem, a wait
+with no acknowledgement was. The ring is a ring and not a faint flag for the
+reason in the paragraph above.
+
+**A palette is only ever a pairing.** A covered cell and an opened one are read
+against each other, so a body's colours cannot be judged on their own. Two
+shipped bodies had drifted until one end of their surface range landed on the
+opened tone — Neptune's band troughs at 1.19:1 and the Sun's bright granules
+against Daylight at 1.25:1 — and on those boards a cleared area could only be
+found by looking for numbers. Both were repainted, both at the cost of some
+surface definition, which is the trade every fix here makes. `renderer.cellFill`
+exists so the test can ask the real code what a cell paints, for every body,
+theme and surface extreme; it was inline in the render loop, where nothing could
+reach it. The floor is 1.6:1, which is not a standard but the level the rest of
+the set already held. Revealed cells also carry `revealedRim` rather than the
+covered cells' near-black grid, so the boundary survives even where the fills
+are close.
+
 **`tools/make-icons.js` renders every icon from the real board geometry** and is
 byte-deterministic, which is what lets CI gate on the icons matching. Do not
 hand-edit files in `icons/`; change the generator and re-run it.

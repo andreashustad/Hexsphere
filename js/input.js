@@ -11,6 +11,7 @@
 
   const TAP_SLOP = 10;          /* px of movement still counted as a tap */
   const DOUBLE_TAP_MS = 280;    /* how long a lone tap waits to see if it is a double */
+  const HOLD_FLAG_MS = 380;     /* a press held this long flags the moment it lifts */
   const FRICTION = 0.93;
   const MIN_SPIN = 0.00035;
 
@@ -23,15 +24,28 @@
    * undoing it on a second tap, would flash a flag on every cell you open,
    * including every cell of a cascade.
    *
+   * That leaves flagging as the one action that pays the wait, and it was the
+   * one that felt broken. Two things answer it, and neither touches the window
+   * itself. `hold` is the whole wait removed for a press deliberate enough to
+   * be unambiguous, and `onPending` lets the board show the wait it is serving
+   * rather than going quiet for a quarter of a second.
+   *
    * Timers are injected so the window can be driven in tests. */
   function makeTapHandler(handlers, deps) {
     let pendingCell = -1;
     let pendingTimer = 0;
 
+    /* Announced on every change, including back to -1, so a renderer can hold
+     * nothing but the current wait. */
+    function announce() {
+      if (handlers.onPending) handlers.onPending(pendingCell, deps.doubleTapMs);
+    }
+
     function clearPending() {
       if (pendingTimer) deps.clearTimeout(pendingTimer);
       pendingTimer = 0;
       pendingCell = -1;
+      announce();
     }
 
     /* A tap elsewhere ends the first cell's wait, so the flag still lands
@@ -42,7 +56,7 @@
       if (cell >= 0) handlers.onFlag(cell);
     }
 
-    return function tap(cell) {
+    function tap(cell) {
       if (handlers.isRevealed(cell)) {
         commitPending();
         handlers.onChord(cell);
@@ -55,13 +69,40 @@
       }
       commitPending();
       pendingCell = cell;
+      announce();
       pendingTimer = deps.setTimeout(function () {
         pendingTimer = 0;
-        const c = pendingCell;
         pendingCell = -1;
-        if (c >= 0) handlers.onFlag(c);
+        announce();
+        if (cell >= 0) handlers.onFlag(cell);
       }, deps.doubleTapMs);
+    }
+
+    /* A press held well past the double-tap window, then lifted. Nothing is
+     * ambiguous about it: a second tap would have to land inside the window,
+     * and the window has already gone by while the finger was still down. So
+     * the flag lands on the lift with no wait at all, which is as fast as
+     * flagging can be, and the caller keeps the hold threshold above the window
+     * so the two gestures cannot be confused.
+     *
+     * A hold on the cell already waiting is still the second tap of a double
+     * tap, just a slow one, so it opens. */
+    tap.hold = function (cell) {
+      if (handlers.isRevealed(cell)) {
+        commitPending();
+        handlers.onChord(cell);
+        return;
+      }
+      if (pendingCell === cell) {
+        clearPending();
+        handlers.onOpen(cell);
+        return;
+      }
+      commitPending();
+      handlers.onFlag(cell);
     };
+
+    return tap;
   }
 
   /* The delegate gets first refusal on every key, and says so by returning
@@ -116,7 +157,18 @@
       return { axis, angle };
     }
 
-    const tap = makeTapHandler(handlers, {
+    /* The pending cell goes straight into render state: the wait is the tap
+     * handler's business, but showing it is the renderer's. */
+    const tapHandlers = Object.assign({}, handlers, {
+      onPending: function (cell, windowMs) {
+        state.pendingFlagCell = cell;
+        state.pendingFlagAt = performance.now();
+        state.pendingFlagMs = windowMs;
+        state.dirty = true;
+      }
+    });
+
+    const tap = makeTapHandler(tapHandlers, {
       doubleTapMs: DOUBLE_TAP_MS,
       setTimeout: (fn, ms) => setTimeout(fn, ms),
       clearTimeout: (id) => clearTimeout(id)
@@ -209,11 +261,19 @@
       dragging = false;
 
       const duration = performance.now() - downAt;
-      if (moved <= TAP_SLOP && downCell >= 0 && duration < 1500) {
+      /* A press that never moved is a press on a cell, however long it lasted.
+       * It used to be dropped past 1500ms, on the grounds that something held
+       * that long was not a tap; with a hold now meaning flag there is nothing
+       * left for the cap to protect, and it would only make the gesture fail
+       * for whoever holds longest. The cell is highlighted throughout, so a
+       * finger resting on the globe can see what it is about to do. */
+      if (moved <= TAP_SLOP && downCell >= 0) {
         spinSpeed = 0;
         /* Right-click stays an instant flag on desktop: it is unambiguous, so
-         * it has no reason to wait out the double-tap window. */
+         * it has no reason to wait out the double-tap window. Neither does a
+         * press held past the window, for the same reason. */
         if (e.button === 2) handlers.onFlag(downCell);
+        else if (duration >= HOLD_FLAG_MS) tap.hold(downCell);
         else tap(downCell);
         return;
       }

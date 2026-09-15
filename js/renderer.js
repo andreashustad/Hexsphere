@@ -72,17 +72,28 @@
       revealedMix: 0.14,
       glow: 'rgba(86,166,255,0.42)', haloInner: 0.9, haloOuter: 1.22, light: [-0.45, 0.7, 0.75]
     },
+    /* The tint is a long way from the obvious deep-sea blue on purpose. At
+     * #0e1f52 the troughs of the bands landed within a hair of an opened cell
+     * (1.19:1, where every other body sits between 1.7 and 3.5), so half the
+     * board read as already cleared. Raising it costs some band definition,
+     * which is the trade the contrast test pins down. */
     neptune: {
       id: 'neptune', frequency: 7, cells: 492,
-      sky: ['#03040e', '#060b20'], hidden: '#3f6ad2', tint: '#0e1f52', pentagon: '#4a72d6',
-      surface: 'bands', freq: 9, amount: 1.0, revealedMix: 0.12,
+      sky: ['#03040e', '#060b20'], hidden: '#3f6ad2', tint: '#1e4497', pentagon: '#4a72d6',
+      surface: 'bands', freq: 9, amount: 0.92, revealedMix: 0.12,
       glow: 'rgba(116,146,255,0.36)', haloInner: 0.88, haloOuter: 1.26, light: [-0.4, 0.66, 0.78]
     },
     /* Self-luminous, so the light is nearly flat. Its own marks too: the
-     * theme's red flag disappears into orange. */
+     * theme's red flag disappears into orange.
+     *
+     * The granules are amber rather than the white hot #ffdf7a they started as,
+     * for the same reason Neptune's bands were lifted: against Daylight's
+     * near-white opened cell the bright end of that range sat at 1.25:1, so on
+     * that one pairing a cleared area vanished. Amber costs some of the granule
+     * definition and keeps the board legible in all three themes. */
     sun: {
       id: 'sun', frequency: 9, cells: 812,
-      sky: ['#0b0400', '#210c02'], hidden: '#d9661a', tint: '#ffdf7a', pentagon: '#e8812c',
+      sky: ['#0b0400', '#210c02'], hidden: '#d9661a', tint: '#eda52a', pentagon: '#e8812c',
       surface: 'granules', freq: 7, amount: 0.8, lightMix: 0.25, revealedMix: 0.16,
       glow: 'rgba(255,164,48,0.58)', haloInner: 0.74, haloOuter: 1.5,
       flag: '#14123a', flagPole: '#f6e7cf', light: [0, 0, 1]
@@ -199,17 +210,70 @@
     return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
   }
 
-  /* Reveal wave: a cell grows from 45% to full size over REVEAL_MS.
-   * markRevealed stamps each cell with a *future* time so the wave ripples
-   * outward from the tap, which means the age below is negative until a cell's
-   * turn arrives. The clamp is what keeps that from running the easing far
-   * outside [0, 1]: unclamped, a cell 41 levels deep eases to -131 and paints
-   * its corners mirrored through its own centre at 65x, filling the canvas. */
-  const REVEAL_MS = 260;
+  function shade(hex, amount) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    if (amount >= 0) {
+      r = r + (255 - r) * amount; g = g + (255 - g) * amount; b = b + (255 - b) * amount;
+    } else {
+      const k = 1 + amount;
+      r *= k; g *= k; b *= k;
+    }
+    return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
+  }
+
+  /* The colour a cell actually paints, from its state and where it sits in the
+   * light. It lives out here rather than inside render() so a test can ask what
+   * a body looks like without a canvas: Neptune's bands had drifted onto the
+   * same tone as an opened cell, which made a cleared area impossible to pick
+   * out, and nothing in the code or the tests could say so. `diffuse` is the
+   * already-flattened lambert term, because a self-luminous body damps it. */
+  function cellFill(theme, body, spec) {
+    const diffuse = spec.diffuse === undefined ? 0 : spec.diffuse;
+    const limb = spec.limb === undefined ? 1 : spec.limb;
+    if (spec.revealed) {
+      /* A cleared cell keeps a trace of its world. Small, deliberately: this is
+       * the surface the numbers are read against. */
+      const base = body
+        ? mixHex(theme.revealed, body.hidden, body.revealedMix === undefined ? 0.12 : body.revealedMix)
+        : theme.revealed;
+      return shade(base, 0.06 * diffuse + 0.10 * limb);
+    }
+    if (spec.pentagon) {
+      return shade((body && body.pentagon) || theme.hiddenPentagon, 0.30 * diffuse + 0.10 * limb - 0.12);
+    }
+    const base = body
+      ? mixHex(body.hidden, body.tint, (spec.terrain || 0) * (body.amount || 0.5))
+      : theme.hidden;
+    return shade(base, 0.34 * diffuse + 0.12 * limb - 0.12);
+  }
+
+  /* Reveal wave: a cell grows from REVEAL_FROM of full size to full over
+   * REVEAL_MS. markRevealed stamps each cell with a *future* time so the wave
+   * ripples outward from the tap, which means the age below is negative until a
+   * cell's turn arrives. The clamp is what keeps that from running the easing
+   * far outside [0, 1]: unclamped, a cell 41 levels deep eases to -131 and
+   * paints its corners mirrored through its own centre at 65x, filling the
+   * canvas.
+   *
+   * The curve is a cubic ease-out, so most of the travel is spent in the first
+   * fifth of the duration: at 260ms from 45% the pop was over before the eye
+   * caught it, and opening a single cell read as the board simply changing
+   * rather than the cell opening. Lengthening it and starting smaller buys the
+   * motion back without slowing the cascade, which is paced by the per-level
+   * stamp in markRevealed, not by this. */
+  const REVEAL_MS = 340;
+  const REVEAL_FROM = 0.34;
   const CELL_SCALE = 0.9;
 
+  /* A flag has already been waited for by the time it is drawn — the tap
+   * handler holds it back to see whether a second tap is coming — so its pop is
+   * shorter than a reveal's on purpose. Every millisecond here is added to a
+   * wait the player has already felt. */
+  const FLAG_MS = 170;
+
   function revealScale(now, t0) {
-    return CELL_SCALE * (0.45 + 0.55 * progress(now, t0, REVEAL_MS));
+    return CELL_SCALE * (REVEAL_FROM + (1 - REVEAL_FROM) * progress(now, t0, REVEAL_MS));
   }
 
   const THEMES = {
@@ -302,6 +366,10 @@
       /* animation bookkeeping */
       revealAt: null,
       flagAt: null,
+      /* The cell whose double-tap window is still open, if any. */
+      pendingFlagCell: -1,
+      pendingFlagAt: 0,
+      pendingFlagMs: 0,
       explodedAt: 0,
       hintCell: -1,
       hintAt: 0,
@@ -436,18 +504,6 @@
       ctx.fill();
     }
 
-    function shade(hex, amount) {
-      const n = parseInt(hex.slice(1), 16);
-      let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-      if (amount >= 0) {
-        r = r + (255 - r) * amount; g = g + (255 - g) * amount; b = b + (255 - b) * amount;
-      } else {
-        const k = 1 + amount;
-        r *= k; g *= k; b *= k;
-      }
-      return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
-    }
-
     function render(now) {
       const sphere = state.sphere;
       const game = state.game;
@@ -497,22 +553,13 @@
         const diffuse = clamp(nx * L[0] + ny * L[1] + cz * L[2], -1, 1) * lit;
         const limb = clamp(cz, 0, 1);
 
-        let fill;
-        if (revealed) {
-          /* A cleared cell keeps a trace of its world. Small, deliberately:
-           * this is the surface the numbers are read against. */
-          const base = body
-            ? mixHex(theme.revealed, body.hidden, body.revealedMix === undefined ? 0.12 : body.revealedMix)
-            : theme.revealed;
-          fill = shade(base, 0.06 * diffuse + 0.10 * limb);
-        } else if (state.showPentagons && ring.length === 5) {
-          fill = shade((body && body.pentagon) || theme.hiddenPentagon, 0.30 * diffuse + 0.10 * limb - 0.12);
-        } else {
-          const base = body
-            ? mixHex(body.hidden, body.tint, (state.terrain ? state.terrain[i] : 0) * (body.amount || 0.5))
-            : theme.hidden;
-          fill = shade(base, 0.34 * diffuse + 0.12 * limb - 0.12);
-        }
+        let fill = cellFill(theme, body, {
+          revealed: revealed,
+          pentagon: state.showPentagons && ring.length === 5,
+          terrain: state.terrain ? state.terrain[i] : 0,
+          diffuse: diffuse,
+          limb: limb
+        });
         if (isMine && !revealed) fill = theme.mineBody;
         if (state.pressedCell === i && !revealed) fill = shade(theme.hiddenLight, 0.1);
 
@@ -532,7 +579,13 @@
 
         if (cellPixels > 6) {
           const hovered = state.hoverCell === i && !revealed && game && game.state !== 'lost';
-          ctx.strokeStyle = hovered ? theme.cursor : theme.grid;
+          /* An opened cell is outlined in its own colour rather than the near
+           * black the covered ones use, so a cleared area reads as one plate
+           * with soft seams against hard-edged covered cells. That boundary is
+           * what you actually scan for, and unlike the fills it does not depend
+           * on the body being light enough to tell apart from the theme. The
+           * palettes carried revealedRim from the start; nothing drew it. */
+          ctx.strokeStyle = hovered ? theme.cursor : revealed ? theme.revealedRim : theme.grid;
           ctx.lineWidth = Math.max(0.5, cellPixels * (hovered ? 0.075 : 0.045));
           ctx.stroke();
         }
@@ -561,6 +614,12 @@
           ctx.fillStyle = theme.maybe;
           ctx.font = '700 ' + fontSize.toFixed(1) + 'px system-ui, sans-serif';
           ctx.fillText('?', px, py);
+        }
+
+        if (state.pendingFlagCell === i && !revealed &&
+            now - state.pendingFlagAt < state.pendingFlagMs) {
+          drawPendingFlag(px, py, size, now);
+          animating = true;
         }
 
         if (isMine) {
@@ -607,10 +666,37 @@
       state.dirty = animating;
       return animating;
 
+      /* The double-tap window, made visible.
+       *
+       * A tap on a covered cell cannot be resolved until the window closes, and
+       * an unacknowledged wait is exactly what reads as lag: you lift your
+       * finger and for a quarter of a second the board says nothing. A ring
+       * that closes as the window does turns the same wait into the game
+       * visibly waiting.
+       *
+       * It is deliberately not a flag, not even a faint one. Drawing the flag
+       * here and taking it back on the second tap would flash a flag on every
+       * cell you open, cascades included, which is the thing the window exists
+       * to avoid. */
+      function drawPendingFlag(px, py, size, now) {
+        const p = progress(now, state.pendingFlagAt, state.pendingFlagMs);
+        const marks = activeBody(theme, state.body);
+        ctx.strokeStyle = (marks && marks.flag) || theme.flag;
+        ctx.globalAlpha = 0.45 + 0.45 * p;
+        ctx.lineWidth = Math.max(1, size * 0.13);
+        ctx.beginPath();
+        ctx.arc(px, py, size * 0.4, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
       function drawFlag(px, py, size, now, index) {
         const t0 = state.flagAt[index];
         let s = size;
-        if (t0 && now - t0 < 220) { s = size * (0.5 + 0.5 * progress(now, t0, 220)); animating = true; }
+        if (t0 && now - t0 < FLAG_MS) {
+          s = size * (0.5 + 0.5 * progress(now, t0, FLAG_MS));
+          animating = true;
+        }
         const h = s * 0.62;
         /* The theme's marks are tuned against navy. A body far off blue, the
          * Sun above all, restates them or its flags vanish into its surface. */
@@ -733,6 +819,6 @@
   global.GS = global.GS || {};
   global.GS.renderer = {
     createRenderer, THEMES, BODIES, revealScale, progress, foreshorten, LABEL_RATIO,
-    buildTerrain, bodyForBoard, activeBody
+    buildTerrain, bodyForBoard, activeBody, cellFill, REVEAL_MS, FLAG_MS
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
