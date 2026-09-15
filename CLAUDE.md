@@ -33,10 +33,13 @@ project published under `andreashustad.github.io` shares one store. The
 `hexsphere.v1` key prefix (`js/storage.js:6`) is what keeps them apart, so it
 is load-bearing, not cosmetic.
 
-**The service worker is cache-first with a constant `VERSION`** until BACKLOG
-item 0 lands. Pushing a content change without also changing `sw.js` does not
-reach any browser that already installed the game. This is the first thing to
-fix and the reason it is ordered first.
+**The service worker is stale-while-revalidate.** A viewer gets the cached copy
+at once and the new bytes on their *next* load, so a fix is never one push away
+from being visible. Do not "optimise" it back to returning a cache hit and
+stopping: that is what made pushed fixes unreachable, because `sw.js`'s own
+bytes were unchanged so no new worker installed. A failed refresh resolves to
+undefined rather than rejecting, which is what keeps offline play working, so
+keep that `.catch`.
 
 **`tools/make-icons.js` renders every icon from the real board geometry** and is
 byte-deterministic, which is what lets CI gate on the icons matching. Do not
