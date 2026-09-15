@@ -21,7 +21,7 @@ completely offline.
 | **Five worlds, not five numbers** | Each board size is a place. Pebble is rough warm rock, Moon is grey maria, Earth has continents and a blue atmosphere, Neptune is banded, Sun is a granulated star with a corona. The surface is computed from each cell's own position, so it is the same world every time you play that size. |
 | **Casual mode** | One fatal tap can be stepped back, and the mine gets flagged for you. |
 | **Daily challenge** | The same board for everyone, derived from the date, pre-opened at the same cell. |
-| **Sizes from 92 to 1442 cells** | Five presets plus a custom board where you pick the cell count and the mine density. |
+| **Sizes from 92 to 4002 cells** | Five presets plus a custom board where you pick the cell count and the mine density. Past about 1500 cells a board no longer fits legibly on one screen, so it becomes a game of zooming in and navigating around the sphere rather than reading the whole globe at once. |
 | **Reads well for everyone** | Three themes including a high-contrast one with an Okabe–Ito number palette that stays distinguishable with any common colour blindness, plus adjustable number size. |
 | **Pentagons are marked** | The twelve five-neighbour cells are tinted, because a cell that touches five neighbours instead of six changes what its number means. |
 | **No ads, no tracking, no network** | Nothing is sent anywhere. Once loaded the game never talks to the network again. |
@@ -111,7 +111,9 @@ neighbours kept clear, then asks the solver to play the board. If logic alone
 cannot finish it, a single mine is moved within the region the solver got stuck
 in and it tries again — small local repairs, so the parts that already worked
 survive. In practice a guess-free board is found in a handful of milliseconds
-even at 1002 cells.
+even at 4002 cells, where a guaranteed board takes about 4ms. Density is what
+costs, not size: at 30% on 812 cells the solver spends 288ms and still fails to
+find a guess-free layout, while 4002 cells at 19% is instant.
 
 It also caps how much the first click may clear. The opening is always a zero
 cell, because a guess-free board has to give the solver somewhere to start, so
@@ -136,7 +138,7 @@ theme owns what you read: the numbers, the revealed cells and the chrome. They
 compose, so five worlds and three themes cost five palettes plus three rather
 than fifteen. Value noise on the cell's own position gives each body its surface
 (continents, craters, bands, granulation), computed once per board and scaled by
-cell count so one treatment holds from 92 cells to 1442. A cleared cell keeps a
+cell count so one treatment holds from 92 cells to 4002. A cleared cell keeps a
 small trace of its body, or the art direction would fade out exactly as you play.
 The high-contrast theme drops the body outright, because its palette exists to
 stay readable with any common colour blindness and a planet painted over it would

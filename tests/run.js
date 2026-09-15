@@ -337,6 +337,22 @@ describe('solver', function () {
     assert(g.revealedCount > 0, 'and it still opens something');
   });
 
+  /* Guards the largest board the UI offers. This one passes the moment it is
+   * written, so it proves nothing about today; it exists so that raising the
+   * cap again, or making generation more expensive, fails here rather than in
+   * someone's hands. */
+  it('still builds a guess-free board at the largest size offered', function () {
+    const sphere = buildSphere(GS.geometry.frequencyForCells(4002));
+    assert(sphere.count >= 4002, 'the frequency covers the requested size');
+    const g = GS.game.createGame({
+      sphere, mineCount: Math.round(sphere.count * 0.19), seed: 'largest', noGuess: true
+    });
+    const started = Date.now();
+    g.openAt(0);
+    assert(g.guaranteed, 'a board this size is still made guess-free');
+    assert(Date.now() - started < 1500, 'and within a budget a first tap can absorb');
+  });
+
   it('generates boards that can be finished without guessing', function () {
     const cases = [
       { frequency: 3, density: 0.155 },
