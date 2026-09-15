@@ -31,6 +31,20 @@ There is also a case for deleting `?new=1` from `manifest.webmanifest` instead
 of honouring it: the app always starts a new game on launch, so the shortcut
 does nothing the plain icon does not already do.
 
+### Noticed while playing, not yet investigated (2026-09-15)
+
+- **The reset button restores the board oddly.** Andreas's words: "resets the
+  board back weirdly, but it might just be the way I put it." Not reproduced or
+  characterised yet. Start by watching what the refresh control in the HUD does
+  to `current` and to the renderer's orientation, and whether `spinTo` is still
+  animating into the old board when the new one arrives (there is a known
+  ~420ms overlap, listed under the earlier out-of-scope observations).
+- **Nothing changes visually above some board size.** Likely the label cutoff at
+  `js/renderer.js` (`drawLabels = cellPixels > 11`), which silently stops drawing
+  numbers once cells get small, but it may also be the body surface losing
+  definition when features fall below one cell. Worth checking both, and whether
+  the threshold should depend on zoom rather than being fixed.
+
 ### Reported but not verified
 
 Three findings from the same review that were never checked against the code.
@@ -64,23 +78,42 @@ work: the menu and HUD are still system font.
 and a flag. Deliberately after 1 and 2: tuning timings against a correct
 renderer and a settled look is the only way to tell whether a change helped.
 
-**3b. Difficulty axis (open, deliberately deferred 2026-09-15).** Size and
-difficulty are still welded together: you cannot play a small hard board. The
-measured case for a separate density setting, should it be wanted:
+**3b. Difficulty axis. Done 2026-09-15.** Four levels (Gentle, Normal, Hard,
+Insane), each setting the mine density, the opening cap and the generator's
+effort budget. Size stays a separate choice. The raw density slider is gone: it
+asked the player to think in a generator parameter, offered combinations that
+could not be delivered, and fragmented records across 22 density values.
+
+One idea measured and rejected before building this: defining a level by *which
+deduction technique* a board requires, using the solver's existing escalation
+from local rules to the subset rule to exhaustive enumeration. It would have
+been size-invariant and meaningful. It does not exist in practice: the band of
+boards needing exhaustive reasoning but still having a guaranteed answer is
+0-7% of boards, usually 3%. The escalation is a cliff, not a gradient.
+
+Records now key on size plus level, so old bests, set at the previous per-size
+densities, are orphaned rather than migrated. Pretending a 19% Earth board was
+"Normal" would have been worse than losing a handful of times.
+
+The measurements that shaped the densities, kept because they are the reason
+the numbers are what they are:
 
 - A hex sphere gives each cell 6 neighbours where square minesweeper gives 8, so
   the same density leaves many more zero-cells. Square beginner/intermediate/
   expert densities of 12.3/15.6/20.6% correspond to 16.1/20.3/26.5% here.
-- The shipped ladder runs 15.5% to 21%, so it spans roughly below-beginner to
-  intermediate. Nothing reaches expert.
-- The guess-free guarantee has a density ceiling that falls as boards grow.
-  Measured: Pebble is fine to 29.5%, Earth to about 28%, Sun to about 25%. At
-  30% on Sun, 0 of 25 boards could be made guess-free, after 288ms of trying.
-  Any difficulty ladder must therefore shrink its offsets as the board grows,
-  or offer the hardest levels only with the guarantee switched off.
+- The previous ladder ran 15.5% to 21%, spanning below-beginner to intermediate,
+  and reached nothing like expert. Hard and Insane are new territory.
+- The guess-free guarantee has a density ceiling that falls as boards grow:
+  Pebble holds to about 29.5%, Earth to 28%, Sun to 25%. Hard and Insane sit at
+  or past that on the larger worlds, so those boards will sometimes need a
+  guess, and the game says so when it happens. That is a deliberate property of
+  the hard rungs, not a defect: Andreas's call on 2026-09-15 was that hitting
+  the ceiling does not matter, and designing around it was making the game worse.
+  Their effort budgets are cut instead, so a board that cannot be guaranteed is
+  discovered in 150-250ms rather than half a second.
 
-Deferred because the opening cap fixed the complaint that prompted it. Worth
-re-measuring the need after playing rather than assuming it.
+Still untested by play: whether Hard at 26% is enjoyable or merely grinding on a
+4002-cell board. Each level is one row of constants in `js/solver.js`.
 
 **4. Content.** Modes, progression, reasons to return beyond the daily. Largest
 and most speculative, and its answer depends on whether this stays a game for

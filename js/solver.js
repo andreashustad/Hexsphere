@@ -457,6 +457,41 @@
     return field;
   }
 
+  /* ---- difficulty levels --------------------------------------------------
+   *
+   * A level is what the player picks. Density is what the generator needs, and
+   * it was previously exposed directly as a percentage slider, which asked the
+   * player to think in a generator parameter. It is also not a difficulty on
+   * its own: the same 19% leaves 40% of 92-cell boards solvable by logic and
+   * 87% of 492-cell ones.
+   *
+   * Densities are the classic beginner / intermediate / expert ratios converted
+   * for a hex sphere, where every cell has 6 neighbours rather than 8, so the
+   * same density leaves far more cells with nothing next to them. 12.3 / 15.6 /
+   * 20.6 per cent become 16 / 20 / 26.
+   *
+   * maxOpening travels with the level because how much the first click hands
+   * over is as much of the difficulty as the mine count: a hard board that
+   * opens a quarter of itself is not hard.
+   *
+   * timeBudgetMs falls as the ladder rises. Past about 26% the generator often
+   * cannot build a guess-free board at all, and near that edge it grinds
+   * hardest, because it keeps almost succeeding. The hard rungs are meant to
+   * sometimes hand you a board that needs a guess, and the game says so when it
+   * does, so they should discover that quickly rather than stall on the first
+   * tap. Generation is synchronous, so a budget here is a freeze. */
+  const LEVELS = [
+    { id: 'gentle', label: 'Gentle', density: 0.16, maxOpening: 0.25, timeBudgetMs: 500 },
+    { id: 'normal', label: 'Normal', density: 0.20, maxOpening: 0.20, timeBudgetMs: 500 },
+    { id: 'hard', label: 'Hard', density: 0.26, maxOpening: 0.15, timeBudgetMs: 250 },
+    { id: 'insane', label: 'Insane', density: 0.32, maxOpening: 0.10, timeBudgetMs: 150 }
+  ];
+
+  function levelFor(id) {
+    for (const level of LEVELS) if (level.id === id) return level;
+    return LEVELS[1];
+  }
+
   /* How many cells the first click would clear on this field. */
   function cascadeSize(sphere, field, start) {
     const view = createView(sphere.count);
@@ -560,7 +595,7 @@
 
   global.GS = global.GS || {};
   global.GS.solver = {
-    createView, deduce, solveBoard, generateBoard, adjacencyCounts,
+    createView, deduce, solveBoard, generateBoard, adjacencyCounts, LEVELS, levelFor,
     revealInto, logChoose, DEFAULTS
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

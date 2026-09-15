@@ -2,16 +2,18 @@
 (function (global) {
   'use strict';
 
-  const { geometry, game: gameApi, renderer: rendererApi, input, storage, util } = global.GS;
+  const { geometry, game: gameApi, renderer: rendererApi, input, storage, util, solver } = global.GS;
   const { Q, clamp } = util;
 
   const DIFFICULTIES = [
-    { id: 'pebble', label: 'Pebble', frequency: 3, density: 0.155, note: '92 cells' },
-    { id: 'moon', label: 'Moon', frequency: 4, density: 0.175, note: '162 cells' },
-    { id: 'earth', label: 'Earth', frequency: 5, density: 0.19, note: '252 cells' },
-    { id: 'neptune', label: 'Neptune', frequency: 7, density: 0.2, note: '492 cells' },
-    { id: 'sun', label: 'Sun', frequency: 9, density: 0.21, note: '812 cells' },
-    { id: 'custom', label: 'Custom', frequency: 5, density: 0.19, note: 'your own' }
+    /* Size only. How dense a board is comes from the chosen level, so that a
+     * level means the same thing whichever world you play it on. */
+    { id: 'pebble', label: 'Pebble', frequency: 3, note: '92 cells' },
+    { id: 'moon', label: 'Moon', frequency: 4, note: '162 cells' },
+    { id: 'earth', label: 'Earth', frequency: 5, note: '252 cells' },
+    { id: 'neptune', label: 'Neptune', frequency: 7, note: '492 cells' },
+    { id: 'sun', label: 'Sun', frequency: 9, note: '812 cells' },
+    { id: 'custom', label: 'Custom', frequency: 5, note: 'your own' }
   ];
 
   const MODE_NOTES = {
@@ -94,11 +96,16 @@
     const rng = util.makeRng('hexsphere-daily-' + dateKey);
     const pool = ['moon', 'earth', 'earth', 'neptune'];
     const pick = difficultyById(pool[rng.int(pool.length)]);
+    /* The daily already varies its size from the seed, so it varies its level
+     * the same way. Weighted to normal, so most days are the familiar one. */
+    const levels = ['gentle', 'normal', 'normal', 'hard'];
+    const level = solver.levelFor(levels[rng.int(levels.length)]);
     const sphere = sphereFor(pick.frequency);
     return {
       difficulty: pick,
+      level,
       sphere,
-      mineCount: Math.round(sphere.count * pick.density),
+      mineCount: Math.round(sphere.count * level.density),
       seed: 'hexsphere-daily-' + dateKey,
       start: rng.int(sphere.count)
     };
@@ -107,26 +114,29 @@
   function currentPlan() {
     if (settings.mode === 'daily') return dailyPlan(storage.todayKey());
     const pick = difficultyById(settings.difficulty);
-    let frequency = pick.frequency;
-    let density = pick.density;
-    if (pick.id === 'custom') {
-      frequency = geometry.frequencyForCells(settings.customCells);
-      density = settings.customDensity;
-    }
+    const level = solver.levelFor(settings.level);
+    const frequency = pick.id === 'custom'
+      ? geometry.frequencyForCells(settings.customCells)
+      : pick.frequency;
     const sphere = sphereFor(frequency);
     return {
       difficulty: pick,
+      level,
       sphere,
-      mineCount: clamp(Math.round(sphere.count * density), 1, sphere.count - 12),
+      mineCount: clamp(Math.round(sphere.count * level.density), 1, sphere.count - 12),
       seed: String(Date.now()) + ':' + Math.random(),
       start: -1
     };
   }
 
+  /* The level is part of the key: a Hard time must never compete with a Gentle
+   * one. Custom keys on its cell count for the same reason. */
   function recordKey(plan) {
     if (settings.mode === 'daily') return 'daily';
-    if (plan.difficulty.id === 'custom') return 'custom:' + plan.sphere.count + ':' + Math.round(settings.customDensity * 100);
-    return plan.difficulty.id;
+    const size = plan.difficulty.id === 'custom'
+      ? 'custom:' + plan.sphere.count
+      : plan.difficulty.id;
+    return size + ':' + plan.level.id;
   }
 
   function newGame() {
@@ -140,7 +150,12 @@
         mineCount: plan.mineCount,
         seed: plan.seed,
         noGuess: settings.noGuess,
-        allowRewind: settings.mode === 'casual'
+        allowRewind: settings.mode === 'casual',
+        /* The level decides how much the first click may hand over, and how
+         * long the generator may spend chasing a guess-free board before it
+         * gives you one that might need a guess. */
+        maxOpening: plan.level.maxOpening,
+        timeBudgetMs: plan.level.timeBudgetMs
       }),
       recorded: false,
       rewound: false,
@@ -400,10 +415,11 @@
     const wrap = $('difficulty-chips');
     wrap.innerHTML = '';
     for (const d of DIFFICULTIES) {
+      const level = solver.levelFor(settings.level);
       const cells = d.id === 'custom'
         ? settings.customCells + ' cells'
         : geometry.cellCountFor(d.frequency) + ' cells · ' +
-          Math.round(geometry.cellCountFor(d.frequency) * d.density) + ' mines';
+          Math.round(geometry.cellCountFor(d.frequency) * level.density) + ' mines';
       const b = document.createElement('button');
       b.className = 'chip' + (settings.difficulty === d.id ? ' is-active' : '');
       b.dataset.difficulty = d.id;
@@ -418,6 +434,33 @@
       wrap.appendChild(b);
     }
     $('custom-box').hidden = settings.difficulty !== 'custom';
+  }
+
+  const LEVEL_NOTES = {
+    gentle: 'Room to breathe. Openings are generous and there is usually an easy next move.',
+    normal: 'The familiar one. Roughly a classic intermediate board.',
+    hard: 'Dense, and the first click hands you far less. About a classic expert board.',
+    insane: 'Denser than anything classic minesweeper offers. Some boards will need a guess.'
+  };
+
+  function buildLevelChips() {
+    const wrap = $('level-chips');
+    wrap.innerHTML = '';
+    for (const level of solver.LEVELS) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (settings.level === level.id ? ' is-active' : '');
+      b.dataset.level = level.id;
+      b.innerHTML = level.label + '<small>' + Math.round(level.density * 100) + '% mines</small>';
+      b.addEventListener('click', function () {
+        settings.level = level.id;
+        storage.save(data);
+        buildLevelChips();
+        /* The size chips quote a mine count, which the level just changed. */
+        buildDifficultyChips();
+      });
+      wrap.appendChild(b);
+    }
+    $('level-note').textContent = LEVEL_NOTES[settings.level] || '';
   }
 
   function buildThemeChips() {
@@ -556,22 +599,16 @@
     });
 
     const cells = $('custom-cells');
-    const density = $('custom-density');
     cells.value = settings.customCells;
-    density.value = Math.round(settings.customDensity * 100);
     function syncCustom() {
       const frequency = geometry.frequencyForCells(Number(cells.value));
       const count = geometry.cellCountFor(frequency);
       settings.customCells = count;
-      settings.customDensity = Number(density.value) / 100;
       $('custom-cells-label').textContent = count;
-      $('custom-density-label').textContent = density.value + '% · ' +
-        Math.round(count * settings.customDensity) + ' mines';
       storage.save(data);
       buildDifficultyChips();
     }
     cells.addEventListener('input', syncCustom);
-    density.addEventListener('input', syncCustom);
     syncCustom();
 
     $('btn-reset-stats').addEventListener('click', function () {
@@ -650,6 +687,7 @@
     });
 
     bindUi();
+    buildLevelChips();
     buildDifficultyChips();
     buildThemeChips();
     setMode(settings.mode);

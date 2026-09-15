@@ -8,6 +8,7 @@
   const DEFAULT_SETTINGS = {
     theme: 'midnight',
     difficulty: 'earth',
+    level: 'normal',
     mode: 'classic',
     noGuess: true,
     questionMarks: false,
@@ -16,8 +17,7 @@
     markPentagons: true,
     autoChord: true,
     labelScale: 1,
-    customCells: 252,
-    customDensity: 0.19
+    customCells: 252
   };
 
   function load() {

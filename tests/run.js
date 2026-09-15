@@ -791,6 +791,62 @@ describe('ranking rules', function () {
   });
 });
 
+/* ---- difficulty levels ---------------------------------------------------- */
+
+/* A level is what a player picks; a density is what the generator needs. The
+ * raw density slider exposed the second as if it were the first, and 19% is not
+ * one difficulty anyway: it leaves 40% of 92-cell boards solvable by logic and
+ * 87% of 492-cell ones. A level also bundles the opening cap, because how much
+ * the first click hands you is as much of the experience as the mine count. */
+describe('difficulty levels', function () {
+  const { LEVELS, levelFor } = GS.solver;
+
+  it('is a ladder: denser and less generous at every step', function () {
+    for (let i = 1; i < LEVELS.length; i++) {
+      const prev = LEVELS[i - 1];
+      const here = LEVELS[i];
+      assert(here.density > prev.density,
+        here.id + ' is not denser than ' + prev.id);
+      assert(here.maxOpening <= prev.maxOpening,
+        here.id + ' gives away more of the board than ' + prev.id);
+    }
+  });
+
+  it('gives the generator everything it needs at every rung', function () {
+    for (const level of LEVELS) {
+      assert(level.density > 0 && level.density < 0.5, level.id + ' density out of range');
+      assert(level.maxOpening > 0 && level.maxOpening <= 1, level.id + ' opening cap out of range');
+      assert(level.timeBudgetMs > 0, level.id + ' has no effort budget');
+      assert(typeof level.label === 'string' && level.label.length, level.id + ' has no label');
+    }
+  });
+
+  it('falls back rather than breaking on a level it does not know', function () {
+    equal(levelFor('normal').id, 'normal', 'a known level');
+    equal(levelFor('not-a-level').id, 'normal', 'anything else lands on normal');
+    equal(levelFor(undefined).id, 'normal', 'including nothing at all');
+  });
+
+  /* The hard rungs are expected to sometimes fail to be guess-free. What they
+   * must not do is spend a long time discovering that, because generation is
+   * synchronous on the first tap. */
+  it('never lets a hard level spend long failing', function () {
+    const sphere = buildSphere(5);
+    for (const level of LEVELS) {
+      const g = GS.game.createGame({
+        sphere, mineCount: Math.round(sphere.count * level.density),
+        seed: 'level-' + level.id, noGuess: true,
+        maxOpening: level.maxOpening, timeBudgetMs: level.timeBudgetMs
+      });
+      const started = Date.now();
+      g.openAt(0);
+      const spent = Date.now() - started;
+      assert(spent < level.timeBudgetMs + 400,
+        level.id + ' took ' + spent + 'ms against a ' + level.timeBudgetMs + 'ms budget');
+    }
+  });
+});
+
 /* ---- bodies --------------------------------------------------------------- */
 
 /* Each board size is a named body (Pebble, Moon, Earth, Neptune, Sun) with its
