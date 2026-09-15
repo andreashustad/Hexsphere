@@ -25,12 +25,12 @@ tasks.named('preBuild') {
 
 android {
     namespace 'com.andreashustad.hexsphere'
-    compileSdk 34
+    compileSdk 37
 
     defaultConfig {
         applicationId "com.andreashustad.hexsphere"
         minSdk 24
-        targetSdk 34
+        targetSdk 36
         versionCode 1
         versionName "1.0"
     }

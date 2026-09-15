@@ -53,15 +53,22 @@ app from the repository root at build time, so there is only ever one copy of
 the game here.
 
 ```sh
-# Open android/ in Android Studio and let it sync (it supplies the Gradle
-# wrapper), then:
+cd android
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The Gradle build is the one part of this project that has not been run by its
-author — expect Android Studio to want to adjust the AGP or Gradle version to
-match your install.
+The wrapper is committed, so this needs no Android Studio, only a JDK. If you
+have Studio installed and no JDK on your PATH, its bundled one works:
+`export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"`.
+The build writes `local.properties` pointing at your SDK; Studio creates it on
+first sync, or write it yourself.
+
+`compileSdk` tracks whichever platform is installed under
+`$ANDROID_HOME/platforms/`, and `targetSdk` tracks Google Play's current floor
+for new apps, which is published on Play's target API level requirements page
+and moves every August. Check both before cutting a release rather than
+trusting the numbers in `app/build.gradle` to still be right.
 
 ## Controls
 
