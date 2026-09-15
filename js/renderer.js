@@ -13,6 +13,22 @@
 
   const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
+  /* A cell's drawn size as a fraction of a face-on one.
+   *
+   * Cells near the silhouette are foreshortened in proportion to how far they
+   * have turned away, so anything drawn on them has to shrink at the same rate
+   * or it spills out. The previous curve, 0.5 + 0.5 * limb, shrank far too
+   * slowly: it only fitted from limb 0.56 upwards, so every number outside the
+   * middle two thirds of the disc was drawn larger than its own cell, and at
+   * the rim they floated clear of the globe. 1.25 * limb keeps a mark inside
+   * its cell everywhere while leaving the middle of the board at full size. */
+  const LABEL_RATIO = 0.72;    /* label size as a fraction of a face-on cell */
+  const MIN_LABEL_PX = 9;      /* below this a number is unreadable, so omit it */
+
+  function foreshorten(limb) {
+    return clamp(1.25 * limb, 0, 1);
+  }
+
   /* Eased 0..1 progress since a stamped time. Every animation here goes through
    * this, because the stamps can be in the future: the reveal wave sets them
    * ahead on purpose so the cascade ripples outward, and a pointer event can
@@ -446,7 +462,7 @@
       const d = state.cameraDistance;
       const cellPixels = state.radius * sphere.cellRadius * 1.9;
       const drawLabels = cellPixels > 11;
-      const fontSize = Math.max(7, cellPixels * 0.72 * state.labelScale);
+      const fontSize = Math.max(7, cellPixels * LABEL_RATIO * state.labelScale);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineJoin = 'round';
@@ -522,14 +538,19 @@
         }
 
         const px = projCenters[i * 2], py = projCenters[i * 2 + 1];
-        const size = cellPixels * (0.55 + 0.45 * limb);
+        /* Same curve as the numbers, but a flag is never dropped: it marks a
+         * decision you made, and losing sight of it would invite a second one
+         * on the same cell. A tiny flag still reads as a mark. */
+        const size = cellPixels * Math.max(0.18, foreshorten(limb));
 
         if (revealed && !isMine) {
           const n = game.adjacency[i];
           /* Cells near the silhouette are foreshortened to a sliver, so their
-           * numbers shrink with them instead of colliding with the neighbours. */
-          if (n > 0 && drawLabels && limb > 0.12) {
-            const labelSize = fontSize * (0.5 + 0.5 * limb);
+           * numbers shrink with them rather than spilling over the neighbours.
+           * Past the point where a number would be too small to read it is
+           * dropped instead: spin the globe to bring it round. */
+          const labelSize = fontSize * foreshorten(limb);
+          if (n > 0 && drawLabels && labelSize >= MIN_LABEL_PX) {
             ctx.fillStyle = theme.numbers[Math.min(n, 8) - 1];
             ctx.font = '700 ' + labelSize.toFixed(1) + 'px ui-rounded, "Segoe UI", system-ui, sans-serif';
             ctx.fillText(String(n), px, py + labelSize * 0.04);
@@ -711,7 +732,7 @@
 
   global.GS = global.GS || {};
   global.GS.renderer = {
-    createRenderer, THEMES, BODIES, revealScale, progress,
+    createRenderer, THEMES, BODIES, revealScale, progress, foreshorten, LABEL_RATIO,
     buildTerrain, bodyForBoard, activeBody
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

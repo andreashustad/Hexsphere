@@ -836,6 +836,31 @@ describe('renderer', function () {
     assert(revealScale(130, 0) > revealScale(0, 0), 'and grows on the way there');
   });
 
+  /* Cells near the silhouette are foreshortened to slivers, but their numbers
+   * and flags were drawn nearly full size, so they spilled outside their own
+   * cells, collided with each other, and at the very edge floated outside the
+   * globe entirely. The old curve, 0.5 + 0.5 * limb, only fitted at limb >= 0.56,
+   * which is to say everything outside the middle two thirds of the disc was
+   * wrong. */
+  it('never draws a mark wider than the cell it sits on', function () {
+    const { foreshorten, LABEL_RATIO } = GS.renderer;
+    for (let limb = 0.02; limb <= 1.0001; limb += 0.02) {
+      /* A cell's projected width shrinks in proportion to limb; a face-on cell
+       * is 1. The label is LABEL_RATIO of a face-on cell before shrinking. */
+      const drawn = LABEL_RATIO * foreshorten(limb);
+      assert(drawn <= limb, 'at limb ' + limb.toFixed(2) + ' the mark is ' +
+        drawn.toFixed(3) + ' wide in a cell ' + limb.toFixed(3) + ' wide');
+    }
+  });
+
+  it('keeps marks full size wherever the cell can hold them', function () {
+    const { foreshorten } = GS.renderer;
+    equal(foreshorten(1), 1, 'dead centre');
+    equal(foreshorten(0.8), 1, 'and still full size well before it');
+    assert(foreshorten(0.4) < foreshorten(0.8), 'but shrinking towards the rim');
+    equal(foreshorten(0), 0, 'and nothing at the silhouette');
+  });
+
   /* Every animation here eases on a stamped time, and those times can sit in
    * the future: the reveal wave stamps them ahead deliberately, and a pointer
    * event can land after the frame's timestamp was taken. Unclamped, the
