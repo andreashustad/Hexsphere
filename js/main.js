@@ -39,7 +39,6 @@
     resultTitle: $('result-title'),
     resultLine: $('result-line'),
     resultStats: $('result-stats'),
-    btnFlag: $('btn-flag'),
     btnHint: $('btn-hint'),
     btnRewind: $('btn-result-rewind')
   };
@@ -49,7 +48,6 @@
 
   let current = null;       /* active game */
   let controls = null;      /* input handle */
-  let flagMode = !!settings.flagFirst;
   let lastTimeText = '';
   let lastMineText = '';
   let toastTimer = 0;
@@ -248,26 +246,32 @@
     updateHintButton();
   }
 
-  function play(cell) {
+  /* Double tap, or Space from the keyboard. */
+  function openCell(cell) {
     const g = current.game;
     if (g.state === 'won' || g.state === 'lost') return;
-    if (g.revealed[cell]) {
-      if (settings.autoChord) applyResult(g.chord(cell));
-      return;
-    }
-    if (flagMode) { flag(cell); return; }
     if (g.flags[cell] === gameApi.FLAG_MINE) { toast('Unflag it first to open it.'); return; }
     applyResult(g.reveal(cell));
   }
 
+  /* Tap on a revealed number. */
+  function chord(cell) {
+    const g = current.game;
+    if (g.state === 'won' || g.state === 'lost') return;
+    if (settings.autoChord) applyResult(g.chord(cell));
+  }
+
+  /* Tap on a hidden cell, or right-click, or F from the keyboard. */
   function flag(cell) {
     const g = current.game;
-    if (g.state === 'ready') { toast('Open a cell first — the mines are placed on your first tap.'); return; }
-    if (g.state !== 'playing') return;
-    if (g.revealed[cell]) {
-      if (settings.autoChord) applyResult(g.chord(cell));
+    if (g.state === 'ready') {
+      toast('Double tap to open a cell first. The mines are placed on your first open.');
       return;
     }
+    if (g.state !== 'playing') return;
+    /* Right-click does not route through the tap handler, so it can still
+     * arrive on a revealed cell. */
+    if (g.revealed[cell]) { chord(cell); return; }
     const result = g.toggleFlag(cell, settings.questionMarks);
     if (result.ok) {
       renderer.state.flagAt[cell] = performance.now();
@@ -275,16 +279,6 @@
       buzz(12);
       updateHud();
     }
-  }
-
-  function longPress(cell) {
-    const g = current.game;
-    if (g.revealed[cell]) {
-      if (settings.autoChord) applyResult(g.chord(cell));
-      return;
-    }
-    if (flagMode) applyResult(g.reveal(cell));
-    else flag(cell);
   }
 
   function askHint() {
@@ -519,11 +513,6 @@
       c.addEventListener('click', function () { setMode(c.dataset.mode); });
     });
 
-    el.btnFlag.addEventListener('click', function () {
-      flagMode = !flagMode;
-      el.btnFlag.setAttribute('aria-pressed', flagMode ? 'true' : 'false');
-      buzz(10);
-    });
     el.btnHint.addEventListener('click', askHint);
     $('btn-zoom-in').addEventListener('click', function () { renderer.setZoom(renderer.state.zoom * 1.25); });
     $('btn-zoom-out').addEventListener('click', function () { renderer.setZoom(renderer.state.zoom / 1.25); });
@@ -545,10 +534,6 @@
     });
 
     bindToggle('opt-noguess', 'noGuess');
-    bindToggle('opt-flagfirst', 'flagFirst', function (on) {
-      flagMode = on;
-      el.btnFlag.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
     bindToggle('opt-autochord', 'autoChord');
     bindToggle('opt-question', 'questionMarks');
     bindToggle('opt-vibrate', 'vibrate');
@@ -613,7 +598,7 @@
       return renderer.pickCell(renderer.state.cx, renderer.state.cy);
     };
     switch (e.key.toLowerCase()) {
-      case ' ': case 'enter': play(centre()); e.preventDefault(); break;
+      case ' ': case 'enter': openCell(centre()); e.preventDefault(); break;
       case 'f': flag(centre()); break;
       case 'c': applyResult(current.game.chord(centre())); break;
       case 'h': askHint(); break;
@@ -654,8 +639,10 @@
     renderer.resize();
 
     controls = input.attachInput(renderer, {
-      onTap: play,
-      onLongPress: longPress,
+      isRevealed: (cell) => !!(current && current.game.revealed[cell]),
+      onOpen: openCell,
+      onChord: chord,
+      onFlag: flag,
       onKey: onKey,
       onZoom: function () { renderer.state.dirty = true; }
     });
@@ -664,7 +651,6 @@
     buildDifficultyChips();
     buildThemeChips();
     setMode(settings.mode);
-    el.btnFlag.setAttribute('aria-pressed', flagMode ? 'true' : 'false');
     renderStats();
     newGame();
 

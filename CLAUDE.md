@@ -41,6 +41,14 @@ bytes were unchanged so no new worker installed. A failed refresh resolves to
 undefined rather than rejecting, which is what keeps offline play working, so
 keep that `.catch`.
 
+**Only covered cells wait out the double-tap window.** `input.makeTapHandler`
+sends a tap on a revealed cell straight to chord, because that tap cannot mean
+anything else. Routing every tap through the window instead would look tidier
+and would put a 280ms delay on chording, which is frequent enough to feel. The
+open also fires on the second tap rather than when the window closes. Do not
+"simplify" either of those away, and do not switch to flagging optimistically
+and undoing it: that flashes a flag on every cell you open, cascades included.
+
 **`tools/make-icons.js` renders every icon from the real board geometry** and is
 byte-deterministic, which is what lets CI gate on the icons matching. Do not
 hand-edit files in `icons/`; change the generator and re-run it.

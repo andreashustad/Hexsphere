@@ -1,8 +1,8 @@
 /* Hexsphere — pointer, touch and keyboard input.
  *
- * One finger drags the globe (with inertia), a tap plays the cell under it,
- * a long press plants a flag, two fingers pinch to zoom. Everything is also
- * reachable from the keyboard.
+ * One finger drags the globe (with inertia), a tap plants a flag, a double tap
+ * opens a cell, a tap on a revealed number opens around it, two fingers pinch
+ * to zoom. Everything is also reachable from the keyboard.
  */
 (function (global) {
   'use strict';
@@ -10,9 +10,59 @@
   const { V, Q, clamp } = global.GS.util;
 
   const TAP_SLOP = 10;          /* px of movement still counted as a tap */
-  const LONG_PRESS_MS = 420;
+  const DOUBLE_TAP_MS = 280;    /* how long a lone tap waits to see if it is a double */
   const FRICTION = 0.93;
   const MIN_SPIN = 0.00035;
+
+  /* Tap flags, double tap opens, and a tap on a revealed number chords.
+   *
+   * Only hidden cells are ambiguous, so only they wait out the double-tap
+   * window; chording stays instant, which matters because it is frequent. The
+   * open fires on the second tap rather than at the end of the window, so the
+   * common action has no latency either. The alternative, flagging at once and
+   * undoing it on a second tap, would flash a flag on every cell you open,
+   * including every cell of a cascade.
+   *
+   * Timers are injected so the window can be driven in tests. */
+  function makeTapHandler(handlers, deps) {
+    let pendingCell = -1;
+    let pendingTimer = 0;
+
+    function clearPending() {
+      if (pendingTimer) deps.clearTimeout(pendingTimer);
+      pendingTimer = 0;
+      pendingCell = -1;
+    }
+
+    /* A tap elsewhere ends the first cell's wait, so the flag still lands
+     * rather than being swallowed by the next tap. */
+    function commitPending() {
+      const cell = pendingCell;
+      clearPending();
+      if (cell >= 0) handlers.onFlag(cell);
+    }
+
+    return function tap(cell) {
+      if (handlers.isRevealed(cell)) {
+        commitPending();
+        handlers.onChord(cell);
+        return;
+      }
+      if (pendingCell === cell) {
+        clearPending();
+        handlers.onOpen(cell);
+        return;
+      }
+      commitPending();
+      pendingCell = cell;
+      pendingTimer = deps.setTimeout(function () {
+        pendingTimer = 0;
+        const c = pendingCell;
+        pendingCell = -1;
+        if (c >= 0) handlers.onFlag(c);
+      }, deps.doubleTapMs);
+    };
+  }
 
   /* The delegate gets first refusal on every key, and says so by returning
    * true. The globe used to claim the arrow keys first and only pass on what
@@ -45,8 +95,6 @@
     let downAt = 0;
     let downCell = -1;
     let lastPos = null;
-    let longPressTimer = 0;
-    let longPressFired = false;
     let pinchDistance = 0;
     let spinAxis = null;
     let spinSpeed = 0;
@@ -68,9 +116,11 @@
       return { axis, angle };
     }
 
-    function cancelLongPress() {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = 0; }
-    }
+    const tap = makeTapHandler(handlers, {
+      doubleTapMs: DOUBLE_TAP_MS,
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (id) => clearTimeout(id)
+    });
 
     function onDown(e) {
       canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
@@ -78,7 +128,6 @@
       pointers.set(e.pointerId, p);
 
       if (pointers.size === 2) {
-        cancelLongPress();
         state.pressedCell = -1;
         const pts = Array.from(pointers.values());
         pinchDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -91,17 +140,11 @@
       downAt = performance.now();
       lastMoveTime = downAt;
       lastPos = p;
-      longPressFired = false;
       downCell = renderer.pickCell(p.x, p.y);
 
       if (downCell >= 0 && e.button !== 2) {
         state.pressedCell = downCell;
         state.dirty = true;
-        longPressTimer = setTimeout(function () {
-          longPressFired = true;
-          state.pressedCell = -1;
-          handlers.onLongPress(downCell);
-        }, LONG_PRESS_MS);
       }
     }
 
@@ -130,9 +173,9 @@
       const dx = p.x - prev.x;
       const dy = p.y - prev.y;
       moved += Math.hypot(dx, dy);
-      if (moved > TAP_SLOP) {
-        cancelLongPress();
-        if (state.pressedCell !== -1) { state.pressedCell = -1; state.dirty = true; }
+      if (moved > TAP_SLOP && state.pressedCell !== -1) {
+        state.pressedCell = -1;
+        state.dirty = true;
       }
       if (moved <= TAP_SLOP) return;
 
@@ -148,7 +191,6 @@
     }
 
     function onUp(e) {
-      cancelLongPress();
       pointers.delete(e.pointerId);
       if (pointers.size === 1) {
         /* Second finger lifted: resume dragging from the one that remains. */
@@ -167,11 +209,12 @@
       dragging = false;
 
       const duration = performance.now() - downAt;
-      if (longPressFired) { spinSpeed = 0; return; }
       if (moved <= TAP_SLOP && downCell >= 0 && duration < 1500) {
         spinSpeed = 0;
-        if (e.button === 2) handlers.onLongPress(downCell);
-        else handlers.onTap(downCell);
+        /* Right-click stays an instant flag on desktop: it is unambiguous, so
+         * it has no reason to wait out the double-tap window. */
+        if (e.button === 2) handlers.onFlag(downCell);
+        else tap(downCell);
         return;
       }
       if (wasPressed !== -1) return;
@@ -180,7 +223,6 @@
     }
 
     function onCancel(e) {
-      cancelLongPress();
       pointers.delete(e.pointerId);
       dragging = false;
       state.pressedCell = -1;
@@ -225,5 +267,5 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.input = { attachInput, makeKeyHandler };
+  global.GS.input = { attachInput, makeKeyHandler, makeTapHandler };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

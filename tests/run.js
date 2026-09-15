@@ -579,6 +579,82 @@ describe('keyboard', function () {
   });
 });
 
+/* ---- taps ----------------------------------------------------------------- */
+
+/* Tap flags, double tap opens. Only hidden cells are ambiguous: a tap on a
+ * revealed number can only mean chord, so it must not pay the double-tap wait.
+ * Chording is frequent enough that making it wait would be felt. */
+describe('taps', function () {
+  const { makeTapHandler } = GS.input;
+
+  function harness(revealedCells) {
+    const log = [];
+    let seq = 1;
+    const timers = new Map();
+    const revealed = new Set(revealedCells || []);
+    const tap = makeTapHandler({
+      isRevealed: (cell) => revealed.has(cell),
+      onChord: (cell) => log.push('chord:' + cell),
+      onFlag: (cell) => log.push('flag:' + cell),
+      onOpen: (cell) => log.push('open:' + cell)
+    }, {
+      doubleTapMs: 280,
+      setTimeout: (fn) => { const id = seq++; timers.set(id, fn); return id; },
+      clearTimeout: (id) => { timers.delete(id); }
+    });
+    return {
+      tap,
+      log,
+      pending: () => timers.size,
+      elapse: () => {
+        const fns = Array.from(timers.values());
+        timers.clear();
+        for (const fn of fns) fn();
+      }
+    };
+  }
+
+  it('chords a revealed cell at once, without waiting for a second tap', function () {
+    const h = harness([7]);
+    h.tap(7);
+    equal(h.log.join(), 'chord:7', 'chord fired immediately');
+    equal(h.pending(), 0, 'and nothing is left waiting');
+  });
+
+  it('opens a hidden cell on the second tap, and never flags it on the way', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap(3);
+    equal(h.log.join(), 'open:3', 'no flag flicker before the open');
+    h.elapse();
+    equal(h.log.join(), 'open:3', 'and the pending flag was cancelled, not merely deferred');
+  });
+
+  it('flags a hidden cell when no second tap arrives', function () {
+    const h = harness();
+    h.tap(3);
+    equal(h.log.length, 0, 'nothing happens yet: it might still become a double tap');
+    h.elapse();
+    equal(h.log.join(), 'flag:3', 'the window closed, so it was a flag');
+  });
+
+  it('commits a pending flag when the next tap lands on a different cell', function () {
+    const h = harness();
+    h.tap(3);
+    h.tap(8);
+    equal(h.log.join(), 'flag:3', 'the first tap is honoured rather than dropped');
+    h.elapse();
+    equal(h.log.join(), 'flag:3,flag:8', 'and the second resolves on its own window');
+  });
+
+  it('does not treat a tap on a revealed cell as the second half of a double tap', function () {
+    const h = harness([8]);
+    h.tap(3);
+    h.tap(8);
+    equal(h.log.join(), 'flag:3,chord:8', 'two different intentions, both honoured');
+  });
+});
+
 /* ---- launch shortcuts ------------------------------------------------------ */
 
 /* The home-screen shortcuts used to write straight into settings, so one tap on

@@ -75,10 +75,15 @@ trusting the numbers in `app/build.gradle` to still be right.
 | Action | Gesture |
 |---|---|
 | Spin the globe | Drag — it keeps coasting when you let go |
-| Open a cell | Tap |
-| Flag a mine | Long press, or turn on **Flag** in the dock and tap |
+| Open a cell | Double tap |
+| Flag a mine | Tap (or right-click on desktop) |
 | Open around a number | Tap a number whose flags are all placed |
 | Zoom | Pinch, scroll, or the dock buttons |
+
+Only covered cells are ambiguous, so only they wait to see whether a tap is
+the first half of a double. A tap on a number opens around it straight away,
+and the open itself fires on the second tap rather than at the end of the
+window, so neither of the two frequent actions has any lag.
 
 Keyboard: arrows spin, <kbd>+</kbd>/<kbd>-</kbd> zoom, <kbd>Space</kbd> opens the
 centre cell, <kbd>F</kbd> flags it, <kbd>C</kbd> opens around it, <kbd>H</kbd>

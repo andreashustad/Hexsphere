@@ -41,10 +41,6 @@
   </div>
 
   <footer class="dock">
-    <button class="dock-btn" id="btn-flag" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 21V4M7 4l11 4-11 4"/></svg>
-      <span>Flag</span>
-    </button>
     <button class="dock-btn" id="btn-hint">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5.9 1.1 1 1.7l.1.5h5l.1-.5c.1-.6.4-1.2 1-1.7A6 6 0 0 0 12 3z"/></svg>
       <span>Hint</span>
@@ -105,10 +101,6 @@
         <input type="checkbox" id="opt-noguess">
       </label>
       <label class="switch-row">
-        <span><b>Tap to flag</b><small>Swap the taps: tap plants a flag, long press opens a cell.</small></span>
-        <input type="checkbox" id="opt-flagfirst">
-      </label>
-      <label class="switch-row">
         <span><b>Auto-open around numbers</b><small>Tap a satisfied number to open everything left around it.</small></span>
         <input type="checkbox" id="opt-autochord">
       </label>
@@ -155,8 +147,8 @@
       <h2>Controls</h2>
       <ul>
         <li><b>Drag</b> to spin the globe. It keeps coasting when you let go.</li>
-        <li><b>Tap</b> a covered cell to open it.</li>
-        <li><b>Long press</b> to flag a mine. Or turn on <i>Flag</i> in the dock and tap.</li>
+        <li><b>Double tap</b> a covered cell to open it.</li>
+        <li><b>Tap</b> a covered cell to flag a mine.</li>
         <li><b>Tap a number</b> whose flags are all placed to open the rest around it.</li>
         <li><b>Pinch</b> or use the zoom buttons to get closer.</li>
         <li><b>Hint</b> points at a cell you can already prove, and says why.</li>

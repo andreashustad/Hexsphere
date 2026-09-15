@@ -10,7 +10,6 @@
     difficulty: 'earth',
     mode: 'classic',
     noGuess: true,
-    flagFirst: false,
     questionMarks: false,
     vibrate: true,
     sound: false,
