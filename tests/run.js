@@ -9,7 +9,7 @@ const path = require('path');
 const vm = require('vm');
 const fs = require('fs');
 
-const sandbox = { performance: { now: () => Date.now() } };
+const sandbox = { performance: { now: () => Date.now() }, URLSearchParams };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 
@@ -22,7 +22,7 @@ sandbox.localStorage = {
 };
 
 vm.createContext(sandbox);
-for (const name of ['util', 'geometry', 'solver', 'game', 'storage', 'renderer']) {
+for (const name of ['util', 'geometry', 'solver', 'game', 'storage', 'renderer', 'input']) {
   const file = path.join(__dirname, '..', 'js', name + '.js');
   vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
 }
@@ -539,6 +539,104 @@ describe('storage', function () {
 
   it('formats the date key as an ISO date', function () {
     equal(GS.storage.todayKey(new Date(2026, 0, 5)), '2026-01-05', 'zero padding');
+  });
+});
+
+/* ---- keyboard ------------------------------------------------------------- */
+
+/* The globe used to claim the arrow keys before anything else saw them, so the
+ * sliders in the settings sheet could not be moved from the keyboard: the value
+ * stayed put and the hidden globe rotated instead. */
+describe('keyboard', function () {
+  const { makeKeyHandler } = GS.input;
+
+  function press(key, delegate) {
+    const rotated = [];
+    const zoomed = [];
+    const onKey = makeKeyHandler({ onKey: delegate }, {
+      state: { radius: 1, zoom: 1 },
+      rotateBy: (dx, dy) => rotated.push([dx, dy]),
+      setZoom: (z) => zoomed.push(z)
+    });
+    let prevented = false;
+    onKey({ key, shiftKey: false, preventDefault: () => { prevented = true; } });
+    return { rotated, zoomed, prevented };
+  }
+
+  const claims = () => true;
+  const declines = () => false;
+
+  it('offers every key to the delegate before the globe takes it', function () {
+    equal(press('ArrowLeft', claims).rotated.length, 0, 'the settings sliders need the arrows');
+    equal(press('ArrowLeft', declines).rotated.length, 1, 'but the globe spins when nothing else wants them');
+    equal(press('+', claims).zoomed.length, 0, 'zoom keys defer too');
+  });
+
+  it('leaves a key nobody claims completely alone', function () {
+    const r = press('q', declines);
+    equal(r.rotated.length, 0, 'no rotation');
+    assert(!r.prevented, 'and no preventDefault, so typing elsewhere still works');
+  });
+});
+
+/* ---- launch shortcuts ------------------------------------------------------ */
+
+/* The home-screen shortcuts used to write straight into settings, so one tap on
+ * Daily switched every later normal launch to daily mode. And ?new=1, declared
+ * in the manifest, was read by nobody. */
+describe('launch shortcuts', function () {
+  const { launchOverrides } = GS.storage;
+
+  it('reads both shortcuts the manifest declares', function () {
+    equal(launchOverrides('?mode=daily').mode, 'daily', 'the daily shortcut');
+    assert(launchOverrides('?new=1').newGame, 'the new-game shortcut');
+  });
+
+  it('asks for nothing when the app is launched normally', function () {
+    const plain = launchOverrides('');
+    equal(plain.mode, null, 'no mode override');
+    assert(!plain.newGame, 'no new game');
+  });
+});
+
+/* ---- ranking rules -------------------------------------------------------- */
+
+/* main.js used to decide this inline, and got it wrong twice: it never
+ * consulted the daily history, so every replay could overwrite the record, and
+ * it never consulted game.guaranteed, so a board the generator gave up on
+ * competed with boards that were provably guess-free. */
+describe('ranking rules', function () {
+  const { isRanked, todayKey } = GS.storage;
+
+  function attempt(overrides) {
+    return Object.assign({ mode: 'classic', rewound: false, hintsUsed: 0, guaranteed: true }, overrides);
+  }
+  function data(daily) {
+    return { settings: {}, records: {}, daily: daily || {}, totals: {} };
+  }
+
+  it('ranks a clean classic game', function () {
+    assert(isRanked(data(), attempt()), 'nothing disqualifies it');
+  });
+
+  it('refuses casual, a rewind and a hinted game', function () {
+    assert(!isRanked(data(), attempt({ mode: 'casual' })), 'casual has a safety net');
+    assert(!isRanked(data(), attempt({ rewound: true })), 'a rewind undid a fatal move');
+    assert(!isRanked(data(), attempt({ hintsUsed: 1 })), 'a hint did some of the reading');
+  });
+
+  it('refuses a daily replay, because the UI promises one ranked attempt', function () {
+    const today = todayKey();
+    const played = {};
+    played[today] = { won: false, time: 90000 };
+    assert(isRanked(data(), attempt({ mode: 'daily' })), 'the first attempt counts');
+    assert(!isRanked(data(played), attempt({ mode: 'daily' })), 'the second does not');
+    assert(isRanked(data(played), attempt({ mode: 'classic' })), 'and it only affects the daily');
+  });
+
+  it('refuses a board the generator could not guarantee', function () {
+    assert(!isRanked(data(), attempt({ guaranteed: false })),
+      'an unguaranteed board may need a coin flip, so its time is not comparable');
   });
 });
 

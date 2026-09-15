@@ -14,6 +14,27 @@
   const FRICTION = 0.93;
   const MIN_SPIN = 0.00035;
 
+  /* The delegate gets first refusal on every key, and says so by returning
+   * true. The globe used to claim the arrow keys first and only pass on what
+   * it did not recognise, which meant the settings sheet never saw them: its
+   * sliders would not move and the hidden globe rotated instead. */
+  function makeKeyHandler(handlers, deps) {
+    return function onKey(e) {
+      if (handlers.onKey && handlers.onKey(e)) return;
+      const step = e.shiftKey ? 0.32 : 0.14;
+      switch (e.key) {
+        case 'ArrowLeft': deps.rotateBy(-step * deps.state.radius, 0); break;
+        case 'ArrowRight': deps.rotateBy(step * deps.state.radius, 0); break;
+        case 'ArrowUp': deps.rotateBy(0, -step * deps.state.radius); break;
+        case 'ArrowDown': deps.rotateBy(0, step * deps.state.radius); break;
+        case '+': case '=': deps.setZoom(deps.state.zoom * 1.12); break;
+        case '-': case '_': deps.setZoom(deps.state.zoom * 0.89); break;
+        default: return;
+      }
+      e.preventDefault();
+    };
+  }
+
   function attachInput(renderer, handlers) {
     const canvas = renderer.canvas;
     const state = renderer.state;
@@ -183,19 +204,11 @@
 
     function stopSpin() { spinSpeed = 0; }
 
-    function onKey(e) {
-      const step = e.shiftKey ? 0.32 : 0.14;
-      switch (e.key) {
-        case 'ArrowLeft': rotateBy(-step * state.radius, 0); break;
-        case 'ArrowRight': rotateBy(step * state.radius, 0); break;
-        case 'ArrowUp': rotateBy(0, -step * state.radius); break;
-        case 'ArrowDown': rotateBy(0, step * state.radius); break;
-        case '+': case '=': renderer.setZoom(state.zoom * 1.12); break;
-        case '-': case '_': renderer.setZoom(state.zoom * 0.89); break;
-        default: return handlers.onKey && handlers.onKey(e);
-      }
-      e.preventDefault();
-    }
+    const onKey = makeKeyHandler(handlers, {
+      state,
+      rotateBy,
+      setZoom: (z) => renderer.setZoom(z)
+    });
 
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointermove', onMove);
@@ -212,5 +225,5 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.input = { attachInput };
+  global.GS.input = { attachInput, makeKeyHandler };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

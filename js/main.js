@@ -53,6 +53,7 @@
   let lastTimeText = '';
   let lastMineText = '';
   let toastTimer = 0;
+  let endTimer = 0;          /* the result card's delay; cancelled by a new game */
   let pendingRecord = null;
 
   /* ---- helpers ---------------------------------------------------------- */
@@ -132,6 +133,8 @@
 
   function newGame() {
     const plan = currentPlan();
+    clearTimeout(endTimer);
+    endTimer = 0;
     current = {
       plan,
       game: gameApi.createGame({
@@ -142,7 +145,8 @@
         allowRewind: settings.mode === 'casual'
       }),
       recorded: false,
-      rewound: false
+      rewound: false,
+      warnedUnguaranteed: false
     };
 
     renderer.setSphere(plan.sphere);
@@ -158,6 +162,9 @@
       const opened = current.game.openAt(plan.start);
       if (opened) renderer.markRevealed(opened.opened, performance.now());
       renderer.state.orientation = renderer.orientationFacing(plan.start);
+      /* The daily generates its board here rather than on the first tap, so
+       * this is where its guarantee is known. */
+      warnIfNotGuaranteed();
     }
 
     hideResult();
@@ -193,8 +200,34 @@
 
   /* ---- moves -------------------------------------------------------------- */
 
+  /* The result card is delayed so the explosion or the win can play out. Start
+   * a new game inside that window and the pending call would otherwise read
+   * the fresh game and book a loss against a board nobody played, resetting
+   * the streak. Both the cancel and the identity check below are needed: the
+   * cancel handles a new game, the check handles anything else that replaces
+   * current.game while a timer is in flight. */
+  function scheduleEndOfGame(delay) {
+    const scheduledFor = current.game;
+    clearTimeout(endTimer);
+    endTimer = setTimeout(function () {
+      endTimer = 0;
+      if (current && current.game === scheduledFor) endOfGame();
+    }, delay);
+  }
+
+  /* The generator can give up and hand back a board that needs a guess. Saying
+   * nothing would make the game look unfair rather than honest, since the help
+   * text promises the opposite. */
+  function warnIfNotGuaranteed() {
+    if (!settings.noGuess || current.warnedUnguaranteed) return;
+    if (current.game.state === 'ready' || current.game.guaranteed) return;
+    current.warnedUnguaranteed = true;
+    toast('This board could not be made guess-free. It may need a guess.', 'bad');
+  }
+
   function applyResult(result) {
     if (!result || !result.ok) return;
+    warnIfNotGuaranteed();
     const now = performance.now();
     if (result.opened.length) {
       renderer.markRevealed(result.opened, now);
@@ -207,10 +240,10 @@
       renderer.state.explodedAt = now;
       renderer.state.showMines = true;
       buzz([0, 40, 60, 90]);
-      setTimeout(endOfGame, 520);
+      scheduleEndOfGame(520);
     } else if (current.game.state === 'won') {
       buzz([0, 25, 45, 25, 45, 60]);
-      setTimeout(endOfGame, 380);
+      scheduleEndOfGame(380);
     }
     updateHintButton();
   }
@@ -290,7 +323,14 @@
     const g = current.game;
     const won = g.state === 'won';
     const plan = current.plan;
-    const ranked = settings.mode !== 'casual' && !current.rewound && g.hintsUsed === 0;
+    /* Read the rule before the daily history is written below, or today's own
+     * attempt would count as the replay that disqualifies it. */
+    const ranked = storage.isRanked(data, {
+      mode: settings.mode,
+      rewound: current.rewound,
+      hintsUsed: g.hintsUsed,
+      guaranteed: g.guaranteed
+    });
     let isBest = false;
 
     if (!current.recorded) {
@@ -558,13 +598,17 @@
     });
   }
 
+  /* Returns true when this handler has taken the key, which stops the globe
+   * from also acting on it. */
   function onKey(e) {
     if (e.key === 'Escape') {
       if (!el.sheet.hidden) closeSheet();
       else if (!el.result.hidden) hideResult();
-      return;
+      return true;
     }
-    if (!el.sheet.hidden) return;
+    /* While the sheet is open it owns the keyboard: its sliders are driven
+     * with the arrow keys, and the globe behind it must stay put. */
+    if (!el.sheet.hidden) return true;
     const centre = function () {
       return renderer.pickCell(renderer.state.cx, renderer.state.cy);
     };
@@ -574,8 +618,9 @@
       case 'c': applyResult(current.game.chord(centre())); break;
       case 'h': askHint(); break;
       case 'n': newGame(); break;
-      default: return;
+      default: return false;
     }
+    return true;
   }
 
   /* ---- boot ------------------------------------------------------------------ */
@@ -587,12 +632,17 @@
     requestAnimationFrame(loop);
   }
 
-  /* Home-screen shortcuts land here: ?mode=daily or ?new=1. */
+  /* Home-screen shortcuts land here: ?mode=daily or ?new=1.
+   *
+   * KNOWN BUG, see BACKLOG item 6: the mode is still written into settings and
+   * persisted, so one tap on the Daily shortcut changes every later normal
+   * launch. Parsing now goes through the tested storage.launchOverrides, but
+   * the fix needs a decision about where a session-only mode should live,
+   * because settings.mode is read in ten places and data.settings is the same
+   * object the whole app saves. */
   function applyLaunchParams() {
-    let params;
-    try { params = new URLSearchParams(location.search); } catch (err) { return; }
-    const mode = params.get('mode');
-    if (mode && MODE_NOTES[mode]) settings.mode = mode;
+    const wanted = storage.launchOverrides(location.search);
+    if (wanted.mode && MODE_NOTES[wanted.mode]) settings.mode = wanted.mode;
     storage.save(data);
   }
 

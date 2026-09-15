@@ -70,6 +70,31 @@
     return isBest;
   }
 
+  /* Home-screen shortcuts arrive as query parameters. They describe this launch
+   * only: writing them into settings meant one tap on the Daily shortcut
+   * switched every later normal launch to daily mode. */
+  function launchOverrides(search) {
+    try {
+      const params = new global.URLSearchParams(search || '');
+      return { mode: params.get('mode'), newGame: params.get('new') === '1' };
+    } catch (err) {
+      return { mode: null, newGame: false };
+    }
+  }
+
+  /* Whether a finished game may set a personal best. The UI promises the daily
+   * is "one ranked attempt", so the daily history is the authority on that
+   * rather than anything the caller tracks; and a board the generator gave up
+   * on may need a coin flip, so its time is not comparable with the rest. */
+  function isRanked(data, attempt) {
+    if (attempt.mode === 'casual') return false;
+    if (attempt.rewound) return false;
+    if (attempt.hintsUsed > 0) return false;
+    if (!attempt.guaranteed) return false;
+    if (attempt.mode === 'daily' && data.daily[attempt.today || todayKey()]) return false;
+    return true;
+  }
+
   function todayKey(date) {
     const d = date || new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
@@ -77,5 +102,7 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.storage = { load, save, recordResult, todayKey, DEFAULT_SETTINGS, KEY };
+  global.GS.storage = {
+    load, save, recordResult, isRanked, launchOverrides, todayKey, DEFAULT_SETTINGS, KEY
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
