@@ -307,6 +307,7 @@
       game.startedAt = Date.now();
       const result = emptyResult();
       result.opened = openFrom(start);
+      finishIfWon(result);
       return result;
     };
 

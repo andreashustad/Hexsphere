@@ -489,6 +489,16 @@ describe('game', function () {
     equal(casual.mistakes, 1, 'the mistake is counted');
   });
 
+  /* reveal() checks for the win after its flood; the seeded opening used by the
+   * daily challenge took a different path and never did. A daily whose opening
+   * cascade clears the board would sit in 'playing' forever. */
+  it('finishes the game when a seeded opening clears the whole board', function () {
+    const g = fresh({ mineCount: 0, noGuess: false });
+    g.openAt(0);
+    equal(g.revealedCount, g.safeCells, 'the cascade cleared every safe cell');
+    equal(g.state, 'won', 'so the game is over, not still playing');
+  });
+
   it('builds an identical board from an identical seed', function () {
     const a = GS.game.createGame({ sphere, mineCount: 28, seed: 'daily-2026-01-01' });
     const b = GS.game.createGame({ sphere, mineCount: 28, seed: 'daily-2026-01-01' });
