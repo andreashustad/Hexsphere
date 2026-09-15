@@ -82,6 +82,14 @@ trusting the numbers in `app/build.gradle` to still be right.
 | Open around a number | Tap a number whose flags are all placed |
 | Zoom | Pinch, scroll, or the dock buttons |
 
+**Tap to open**, in Settings, swaps the first two: a tap opens and only a hold
+flags. It exists because the default mapping puts a timer on the action you do
+most in the midgame. A recording of real play came to 81 taps for 52 moves —
+every open was two taps, and every flag waited out the window — where tap to
+open would have been 52 gestures with nothing waiting on a timer at all. It is
+off by default because it is muscle memory, and because a stray tap opens a cell
+rather than marking one.
+
 Only covered cells are ambiguous, so only they wait to see whether a tap is the
 first half of a double. A tap on a number opens around it straight away, the
 open fires on the second tap rather than at the end of the window, and a press
@@ -91,7 +99,9 @@ nothing left to disambiguate. That leaves one gesture that has to wait, a quick
 lone tap, and while it does the cell carries a ring that closes as the window
 does, because an unacknowledged wait is what reads as lag. The ring is
 deliberately not a faint flag: a flag drawn and then taken back would flash on
-every cell you open, cascades included.
+every cell you open, cascades included. A press on its way to a flag carries the
+same ring, and both fill in step with the clock rather than easing, because a
+countdown that reads as finished before it is would have you let go too early.
 
 Keyboard: arrows spin, <kbd>+</kbd>/<kbd>-</kbd> zoom, <kbd>Space</kbd> opens the
 centre cell, <kbd>F</kbd> flags it, <kbd>C</kbd> opens around it, <kbd>H</kbd>

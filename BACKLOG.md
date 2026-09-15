@@ -88,6 +88,32 @@ per-level stamp in `markRevealed`, not from this. The test pins what is left to
 see rather than the constant, because tuning by duration alone is what let the
 pop disappear in the first place.
 
+### What a screen recording of real play showed (2026-09-15)
+
+38.6 seconds of play on Neptune at zoom 2, analysed frame by frame (the file's
+own timeline is 2x fast — the in-game clock, which is wall clock, is what gives
+the real duration). Worth repeating the next time something feels off, because
+almost every guess about it was wrong and the measurements were not.
+
+- **Not the frame rate.** 81% of screen updates were 16.7ms apart. One 100ms
+  hitch in the whole clip. The `dirty` flag means the app codes no frames at all
+  when nothing moves, so the gaps between captured frames are themselves a
+  record of what the game did and when.
+- **Not opening cells.** 29 double-taps, second tap landing 50-117ms after the
+  first lifted, cell turned over ~67ms after that. None failed.
+- **Flagging, and worse than the 280ms window suggests.** 23 of 52 actions were
+  flags. Finger down, finger up, then 300ms in which *not one frame was
+  captured* because nothing on screen changed, then the flag, then another
+  ~180ms of it growing. In a burst it compounds: taps came 130-250ms apart,
+  faster than the window, so each flag only landed when the next tap committed
+  it and the marks trailed one action behind the finger.
+- **52 actions cost 81 taps.** Which is what the tap-to-open setting is for.
+
+Measuring input from a recording works better than expected and is worth reusing:
+the pressed-cell highlight is `shade(theme.hiddenLight, 0.1)` and nothing else on
+the board is that colour, so every touch-down and touch-up can be recovered exactly,
+with the cell's screen position, from `ffmpeg -vsync 0` frames.
+
 ### Reported but not verified
 
 Three findings from the same review that were never checked against the code.

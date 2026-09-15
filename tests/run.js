@@ -662,14 +662,16 @@ describe('keyboard', function () {
 describe('taps', function () {
   const { makeTapHandler } = GS.input;
 
-  function harness(revealedCells) {
+  function harness(revealedCells, opts) {
     const log = [];
     let seq = 1;
     const timers = new Map();
     const revealed = new Set(revealedCells || []);
     const announced = [];
+    const mode = { tapOpens: !!(opts && opts.tapOpens) };
     const tap = makeTapHandler({
       isRevealed: (cell) => revealed.has(cell),
+      tapOpens: () => mode.tapOpens,
       onChord: (cell) => log.push('chord:' + cell),
       onFlag: (cell) => log.push('flag:' + cell),
       onOpen: (cell) => log.push('open:' + cell),
@@ -683,6 +685,7 @@ describe('taps', function () {
       tap,
       log,
       announced,
+      mode,
       /* What the board would be drawing now: the last cell announced. */
       shown: () => (announced.length ? announced[announced.length - 1] : -1),
       pending: () => timers.size,
@@ -796,6 +799,136 @@ describe('taps', function () {
     h.tap(3);
     h.tap.hold(8);
     equal(h.log.join(), 'flag:3,flag:8', 'both marks land, in the order they were asked for');
+  });
+
+  /* Tap to open is the other way round: a tap opens and a hold flags. It is the
+   * only one of the three answers to the wait that removes it rather than
+   * covering for it — nothing is ambiguous, so nothing needs a window, and the
+   * frequent action costs one tap instead of two. A recording of real play was
+   * 81 taps for 52 actions under the default mapping. */
+  describe('tap to open', function () {
+    it('opens on a single tap, with no window to wait out', function () {
+      const h = harness(null, { tapOpens: true });
+      h.tap(3);
+      equal(h.log.join(), 'open:3', 'opened at once');
+      equal(h.pending(), 0, 'and no timer was started');
+      equal(h.shown(), -1, 'so there is no wait to draw');
+    });
+
+    it('flags on a held press, the same gesture as under the other mapping', function () {
+      const h = harness(null, { tapOpens: true });
+      h.tap.hold(3);
+      equal(h.log.join(), 'flag:3', 'held presses mean flag either way');
+    });
+
+    it('still chords a revealed cell', function () {
+      const h = harness([7], { tapOpens: true });
+      h.tap(7);
+      equal(h.log.join(), 'chord:7', 'a number is a number in both mappings');
+    });
+
+    it('opens every tap of a run rather than treating two as one gesture', function () {
+      const h = harness(null, { tapOpens: true });
+      h.tap(3);
+      h.tap(3);
+      equal(h.log.join(), 'open:3,open:3', 'no pairing, so no cell is skipped in a fast run');
+    });
+
+    /* The setting is in a sheet that opens over a live board, so it can be
+     * turned on with a flag still waiting out its window behind it. That flag
+     * was asked for and must land; dropping it would lose a mark the player had
+     * already committed to. */
+    it('lands a flag that was already waiting when the setting was turned on', function () {
+      const h = harness();
+      h.tap(3);
+      h.mode.tapOpens = true;
+      h.tap(8);
+      equal(h.log.join(), 'flag:3,open:8', 'the pending flag landed, then the new tap opened');
+      h.elapse();
+      equal(h.log.join(), 'flag:3,open:8', 'and it was cancelled, not merely deferred');
+    });
+  });
+});
+
+/* ---- the hold ring ---------------------------------------------------------- */
+
+/* A press on its way to becoming a flag shows a ring that closes as it arms.
+ * Under the default mapping that is a convenience; under tap to open it is a
+ * safety rail, because letting go early there does not do nothing, it opens the
+ * cell. So the ring must close exactly when the hold arms — a ring that fills
+ * early is an invitation to open a mine. */
+describe('the hold ring', function () {
+  const { holdRingWindow, HOLD_FLAG_MS, DOUBLE_TAP_MS } = GS.input;
+
+  it('closes exactly as the press becomes a flag', function () {
+    const ring = holdRingWindow();
+    equal(ring.after + ring.duration, HOLD_FLAG_MS,
+      'the ring must not promise a flag before letting go would give one');
+  });
+
+  it('stays off screen for an ordinary tap', function () {
+    /* Measured from a recording of real play: taps ran 17-117ms of contact. */
+    assert(holdRingWindow().after > 120, 'a quick tap must not flash a ring');
+  });
+
+  it('leaves enough ring to be read before the hold arms', function () {
+    assert(holdRingWindow().duration > 150, 'too short to see is the same as no ring');
+  });
+
+  /* The hold has to sit clear of the double-tap window, or the slow second tap
+   * of a double tap arms a flag on the cell it meant to open. */
+  it('keeps the hold threshold above the double-tap window', function () {
+    assert(HOLD_FLAG_MS > DOUBLE_TAP_MS + 60, 'hold ' + HOLD_FLAG_MS + ' vs window ' + DOUBLE_TAP_MS);
+  });
+});
+
+/* ---- the coast ------------------------------------------------------------- */
+
+/* The globe keeps spinning after a flick, and the question is where that stops.
+ * The floor used to be a flat angle, which is not a speed anybody can see: the
+ * same 0.00035 rad crosses four times as much screen zoomed in as zoomed out.
+ * A recording of real play showed the cost — the last stretch of every flick
+ * was spent moving far under a pixel a frame, too slow to read as motion and
+ * too slow to be finished, so the board never quite settled. */
+describe('coasting', function () {
+  const { minSpinFor, FRICTION, MIN_SPIN_PX } = GS.input;
+
+  /* Radii the game actually produces: a 390px-wide phone at zoom 0.75 up to
+   * zoom 3.2, which is the whole of what setZoom allows. */
+  const RADII = [142, 189, 284, 378, 605];
+
+  it('stops at the same apparent speed however far the player has zoomed in', function () {
+    for (const radius of RADII) {
+      const px = minSpinFor(radius) * radius;
+      assert(Math.abs(px - MIN_SPIN_PX) < 1e-9,
+        'at radius ' + radius + ' the coast ends at ' + px.toFixed(3) + ' px/frame');
+    }
+  });
+
+  it('never ends a flick on motion too slow to see', function () {
+    /* The old floor, for comparison: at the zoom the recording was played at it
+     * left the globe crawling at a third of a pixel a frame for a quarter of a
+     * second. Anything under about a quarter pixel is invisible. */
+    for (const radius of RADII) {
+      assert(minSpinFor(radius) * radius >= 0.25, 'radius ' + radius);
+      assert(0.00035 * 378 < 0.25, 'the old flat floor was invisible at zoom 2');
+    }
+  });
+
+  it('still lets a flick glide, and still ends it', function () {
+    for (const radius of RADII) {
+      const floor = minSpinFor(radius);
+      let speed = 0.16;          /* the hardest flick the drag handler will hand over */
+      let frames = 0;
+      while (speed > floor && frames < 600) { speed *= FRICTION; frames++; }
+      assert(frames > 20, 'at radius ' + radius + ' the coast lasted only ' + frames + ' frames');
+      assert(frames < 90, 'at radius ' + radius + ' the coast ran ' + frames + ' frames');
+    }
+  });
+
+  it('holds the floor away from zero for a degenerate radius', function () {
+    assert(minSpinFor(0) > 0, 'a zero radius must not divide by zero');
+    equal(minSpinFor(0), minSpinFor(40), 'it clamps rather than exploding');
   });
 });
 
@@ -1122,13 +1255,28 @@ describe('renderer', function () {
    * easing runs away, which is how a flag once drew 27,000 pixels wide. One
    * shared helper means the next animation cannot reintroduce it. */
   it('keeps every animation between not-started and finished', function () {
-    const { progress } = GS.renderer;
+    const { progress, span } = GS.renderer;
     for (const age of [-90000, -2206, -220, -1, 0, 1, 110, 219, 220, 900, 90000]) {
       const p = progress(0, -age, 220);
       assert(p >= 0 && p <= 1, 'progress at age ' + age + 'ms was ' + p);
+      const q = span(0, -age, 220);
+      assert(q >= 0 && q <= 1, 'span at age ' + age + 'ms was ' + q);
     }
     equal(progress(0, 0, 220), 0, 'not started');
     equal(progress(220, 0, 220), 1, 'finished');
+  });
+
+  /* The ring that counts a press down to a flag is a meter, not an animation.
+   * On the eased curve it was three quarters closed a third of the way in,
+   * which under tap to open reads as "let go now" while letting go still
+   * opens the cell. */
+  it('fills the countdown ring in step with the time it stands for', function () {
+    const { span } = GS.renderer;
+    for (const frac of [0.25, 0.5, 0.75]) {
+      const drawn = span(frac * 230, 0, 230);
+      assert(Math.abs(drawn - frac) < 1e-9,
+        'at ' + (frac * 100) + '% of the wait the ring was ' + (drawn * 100).toFixed(0) + '% closed');
+    }
   });
 });
 

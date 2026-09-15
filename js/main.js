@@ -278,7 +278,7 @@
     updateHintButton();
   }
 
-  /* Double tap, or Space from the keyboard. */
+  /* The second tap of a double tap, a lone tap under tap-to-open, or Space. */
   function openCell(cell) {
     const g = current.game;
     if (g.state === 'won' || g.state === 'lost') return;
@@ -297,7 +297,8 @@
   function flag(cell) {
     const g = current.game;
     if (g.state === 'ready') {
-      toast('Double tap to open a cell first. The mines are placed on your first open.');
+      toast((settings.tapOpens ? 'Tap' : 'Double tap') +
+        ' to open a cell first. The mines are placed on your first open.');
       return;
     }
     if (g.state !== 'playing') return;
@@ -569,6 +570,24 @@
     $('records-body').innerHTML = rows.join('');
   }
 
+  /* The two lines of the help sheet that the tap mapping decides. They are
+   * written from the setting rather than fixed in the markup, because a help
+   * page describing the other mapping is worse than no help page: the player
+   * who just turned this on is exactly the one who goes looking. */
+  function updateControlsHelp() {
+    const open = $('help-open');
+    const flag = $('help-flag');
+    if (!open || !flag) return;
+    if (settings.tapOpens) {
+      open.innerHTML = '<b>Tap</b> a covered cell to open it.';
+      flag.innerHTML = '<b>Press and hold</b> a covered cell to flag a mine.';
+    } else {
+      open.innerHTML = '<b>Double tap</b> a covered cell to open it.';
+      flag.innerHTML = '<b>Tap</b> a covered cell to flag a mine — or <b>press and hold</b> it, ' +
+        'which flags the moment you let go instead of waiting to see if a second tap is coming.';
+    }
+  }
+
   function bindToggle(id, key, onChange) {
     const node = $(id);
     node.checked = !!settings[key];
@@ -617,6 +636,7 @@
 
     bindToggle('opt-noguess', 'noGuess');
     bindToggle('opt-autochord', 'autoChord');
+    bindToggle('opt-tapopens', 'tapOpens', function () { updateControlsHelp(); });
     bindToggle('opt-question', 'questionMarks');
     bindToggle('opt-vibrate', 'vibrate');
     bindToggle('opt-pentagons', 'markPentagons', function (on) {
@@ -710,6 +730,9 @@
 
     controls = input.attachInput(renderer, {
       isRevealed: (cell) => !!(current && current.game.revealed[cell]),
+      /* Asked per tap, not read once: the sheet can be opened and this
+       * flipped with the board still live behind it. */
+      tapOpens: () => !!settings.tapOpens,
       onOpen: openCell,
       onChord: chord,
       onFlag: flag,
@@ -718,6 +741,7 @@
     });
 
     bindUi();
+    updateControlsHelp();
     buildLevelChips();
     buildDifficultyChips();
     buildThemeChips();

@@ -11,6 +11,7 @@
     level: 'normal',
     mode: 'classic',
     noGuess: true,
+    tapOpens: false,
     questionMarks: false,
     vibrate: true,
     sound: false,

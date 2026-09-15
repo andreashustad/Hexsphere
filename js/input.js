@@ -12,8 +12,34 @@
   const TAP_SLOP = 10;          /* px of movement still counted as a tap */
   const DOUBLE_TAP_MS = 280;    /* how long a lone tap waits to see if it is a double */
   const HOLD_FLAG_MS = 380;     /* a press held this long flags the moment it lifts */
+  const HOLD_RING_AFTER_MS = 150;  /* how long a press stays silent before showing its ring */
+
+  /* When the ring that counts a press towards a flag starts, and how long it
+   * then takes. It closes exactly as the hold arms, never before: under tap to
+   * open a press let go early does not flag, it *opens*, so a ring that
+   * promised a flag a moment too soon would hand the player a cell they meant
+   * to mark — sometimes a mine. The silent head start is what keeps it off the
+   * screen during ordinary taps, which last 50-120ms. */
+  function holdRingWindow() {
+    return { after: HOLD_RING_AFTER_MS, duration: HOLD_FLAG_MS - HOLD_RING_AFTER_MS };
+  }
   const FRICTION = 0.93;
-  const MIN_SPIN = 0.00035;
+  const MIN_SPIN_PX = 0.5;      /* a coast is over below this much surface travel per frame */
+
+  /* Where a coast stops, in radians per frame, for the zoom it is being watched
+   * at. The floor used to be a flat 0.00035 rad, which is not a speed anybody
+   * can see: it is an angle, and how much of the screen it crosses depends
+   * entirely on how far in the player has zoomed. A screen recording of real
+   * play showed what that costs — after every flick the globe spent its last
+   * ~0.4s travelling well under a pixel a frame, far too slow to read as
+   * motion and far too slow to be over, so the board never quite settled and
+   * the render loop stayed awake for all of it. Measuring the floor where the
+   * player actually sees it, in pixels of surface travel, ends the flick at
+   * the same apparent speed whether they are zoomed out to the whole globe or
+   * in on a dozen cells. */
+  function minSpinFor(radius) {
+    return MIN_SPIN_PX / Math.max(40, radius);
+  }
 
   /* Tap flags, double tap opens, and a tap on a revealed number chords.
    *
@@ -29,6 +55,12 @@
    * itself. `hold` is the whole wait removed for a press deliberate enough to
    * be unambiguous, and `onPending` lets the board show the wait it is serving
    * rather than going quiet for a quarter of a second.
+   *
+   * `handlers.tapOpens()` is the third answer, and the only one that removes
+   * the window rather than covering for it. With it on, a tap opens and a hold
+   * flags, so neither action waits on a timer and neither costs two taps. It is
+   * asked on every tap rather than read once, because it is a setting the
+   * player can change with the board still on screen behind the sheet.
    *
    * Timers are injected so the window can be driven in tests. */
   function makeTapHandler(handlers, deps) {
@@ -62,6 +94,15 @@
         handlers.onChord(cell);
         return;
       }
+      /* Tap to open: nothing to disambiguate, so nothing to wait for. The
+       * commit is not dead code — the setting can be turned on while a flag
+       * from the previous mapping is still waiting out its window, and that
+       * flag should land rather than vanish. */
+      if (handlers.tapOpens && handlers.tapOpens()) {
+        commitPending();
+        handlers.onOpen(cell);
+        return;
+      }
       if (pendingCell === cell) {
         clearPending();
         handlers.onOpen(cell);
@@ -83,10 +124,13 @@
      * and the window has already gone by while the finger was still down. So
      * the flag lands on the lift with no wait at all, which is as fast as
      * flagging can be, and the caller keeps the hold threshold above the window
-     * so the two gestures cannot be confused.
+     * so the two gestures cannot be confused. It is the same gesture under both
+     * mappings, which is what lets the setting be flipped mid-game without
+     * relearning anything.
      *
      * A hold on the cell already waiting is still the second tap of a double
-     * tap, just a slow one, so it opens. */
+     * tap, just a slow one, so it opens. Under tap-to-open nothing is ever
+     * waiting, so that case cannot arise there. */
     tap.hold = function (cell) {
       if (handlers.isRevealed(cell)) {
         commitPending();
@@ -157,15 +201,35 @@
       return { axis, angle };
     }
 
-    /* The pending cell goes straight into render state: the wait is the tap
-     * handler's business, but showing it is the renderer's. */
+    /* The ring that says a flag is coming, in render state where the renderer
+     * can draw it. Two things put it there and they never overlap: a press
+     * counting towards a hold, and a lifted tap waiting out its window. */
+    function showRing(cell, windowMs) {
+      state.pendingFlagCell = cell;
+      state.pendingFlagAt = performance.now();
+      state.pendingFlagMs = windowMs;
+      state.dirty = true;
+    }
+
+    let holdTimer = 0;
+
+    function armHoldRing(cell) {
+      const ring = holdRingWindow();
+      holdTimer = setTimeout(function () {
+        holdTimer = 0;
+        showRing(cell, ring.duration);
+      }, ring.after);
+    }
+
+    /* Called before anything else can decide what the press meant, so a tap
+     * that resolves on the lift can put its own ring up in the same frame. */
+    function cancelHoldRing() {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = 0; }
+      if (state.pendingFlagCell !== -1) showRing(-1, 0);
+    }
+
     const tapHandlers = Object.assign({}, handlers, {
-      onPending: function (cell, windowMs) {
-        state.pendingFlagCell = cell;
-        state.pendingFlagAt = performance.now();
-        state.pendingFlagMs = windowMs;
-        state.dirty = true;
-      }
+      onPending: function (cell, windowMs) { showRing(cell, windowMs); }
     });
 
     const tap = makeTapHandler(tapHandlers, {
@@ -181,6 +245,7 @@
 
       if (pointers.size === 2) {
         state.pressedCell = -1;
+        cancelHoldRing();
         const pts = Array.from(pointers.values());
         pinchDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         return;
@@ -197,6 +262,7 @@
       if (downCell >= 0 && e.button !== 2) {
         state.pressedCell = downCell;
         state.dirty = true;
+        armHoldRing(downCell);
       }
     }
 
@@ -227,6 +293,8 @@
       moved += Math.hypot(dx, dy);
       if (moved > TAP_SLOP && state.pressedCell !== -1) {
         state.pressedCell = -1;
+        /* It is a drag now, so it is not going to become a flag. */
+        cancelHoldRing();
         state.dirty = true;
       }
       if (moved <= TAP_SLOP) return;
@@ -255,6 +323,7 @@
 
       const wasPressed = state.pressedCell;
       state.pressedCell = -1;
+      cancelHoldRing();
       state.dirty = true;
 
       if (!dragging) return;
@@ -279,13 +348,14 @@
       }
       if (wasPressed !== -1) return;
       /* Otherwise let the globe keep spinning for a moment. */
-      if (spinSpeed > MIN_SPIN) state.dirty = true; else spinSpeed = 0;
+      if (spinSpeed > minSpinFor(state.radius)) state.dirty = true; else spinSpeed = 0;
     }
 
     function onCancel(e) {
       pointers.delete(e.pointerId);
       dragging = false;
       state.pressedCell = -1;
+      cancelHoldRing();
       state.dirty = true;
     }
 
@@ -297,7 +367,7 @@
 
     /* Called once per frame by the main loop to keep the globe coasting. */
     function applyInertia() {
-      if (spinSpeed <= MIN_SPIN || !spinAxis || dragging) return false;
+      if (spinSpeed <= minSpinFor(state.radius) || !spinAxis || dragging) return false;
       state.orientation = Q.normalize(Q.multiply(Q.fromAxisAngle(spinAxis, spinSpeed), state.orientation));
       spinSpeed *= FRICTION;
       state.dirty = true;
@@ -327,5 +397,8 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.input = { attachInput, makeKeyHandler, makeTapHandler };
+  global.GS.input = {
+    attachInput, makeKeyHandler, makeTapHandler, minSpinFor, holdRingWindow,
+    TAP_SLOP, DOUBLE_TAP_MS, HOLD_FLAG_MS, FRICTION, MIN_SPIN_PX
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

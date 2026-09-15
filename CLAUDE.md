@@ -78,8 +78,10 @@ was small enough. Default such options *after* the assign, and test that an easy
 constraint is accepted promptly rather than only testing the outcome.
 
 **Every animation eases through `progress()`, and that is not optional.**
-`easeOut` is a cubic, so feeding it a value outside `[0, 1]` does not degrade,
-it explodes. Animation times here can legitimately sit in the future: the reveal
+(`span` is the same clamp without the easing, for the rings that are meters
+rather than animations; `easeOut` still has exactly one caller, which is the
+point.) `easeOut` is a cubic, so feeding it a value outside `[0, 1]` does not
+degrade, it explodes. Animation times here can legitimately sit in the future: the reveal
 wave stamps them ahead on purpose, and a pointer event can land after the
 frame's timestamp was taken. Two separate bugs came from this, a cell painted at
 65x mirrored and a flag drawn 27,000 pixels wide. `easeOut` is now called from
@@ -112,6 +114,32 @@ the cell it meant to open. And `onPending` names the cell being waited on, so th
 renderer can close a ring on it: the wait was never really the problem, a wait
 with no acknowledgement was. The ring is a ring and not a faint flag for the
 reason in the paragraph above.
+
+**A coast has to end at a speed, not at an angle.** `MIN_SPIN_PX` is where a
+flick stops, measured in pixels of surface travel per frame, and `minSpinFor`
+turns it into the radians-per-frame the inertia loop needs for the current
+radius. It was a flat angle for a long time, which is not a speed anybody can
+see: the same 0.00035 rad crosses four times as much screen zoomed in as zoomed
+out. A screen recording of real play showed the cost — after every flick the
+globe spent its last ~0.4s moving well under a pixel a frame, too slow to read
+as motion and too slow to be finished, so the board never settled and the render
+loop stayed awake for all of it. Anything else that decides when a movement is
+over belongs in the same units, for the same reason.
+
+**Tap to open is a second mapping, not a second input path.** The setting swaps
+which gesture opens and which flags, and it does it inside `makeTapHandler` by
+asking `handlers.tapOpens()` on every tap — asked, not read once, because the
+sheet opens over a live board and the answer can change between two taps. Both
+mappings share one hold gesture and one ring; do not grow a parallel handler for
+the second mapping, and do not cache the setting.
+
+Under tap to open the hold ring stops being a convenience and becomes a safety
+rail: letting go early there does not do nothing, it *opens the cell*, which on
+the wrong cell is the game. So the ring must close exactly as the hold arms —
+`holdRingWindow()` is the one place that arithmetic lives, and the test pins
+`after + duration === HOLD_FLAG_MS`. For the same reason the ring is drawn from
+`span` and not `progress`: it is a meter, not an animation, and the eased curve
+read three quarters closed a third of the way in.
 
 **A palette is only ever a pairing.** A covered cell and an opened one are read
 against each other, so a body's colours cannot be judged on their own. Two

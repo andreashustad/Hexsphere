@@ -29,14 +29,24 @@
     return clamp(1.25 * limb, 0, 1);
   }
 
-  /* Eased 0..1 progress since a stamped time. Every animation here goes through
+  /* Clamped 0..1 position between two times. Every animation here goes through
    * this, because the stamps can be in the future: the reveal wave sets them
    * ahead on purpose so the cascade ripples outward, and a pointer event can
    * land after the frame's timestamp was taken. easeOut is a cubic, so an
    * unclamped input does not degrade, it explodes: an age of -2.2s once drew a
-   * flag 27,000 pixels wide, mirrored through its own centre. */
+   * flag 27,000 pixels wide, mirrored through its own centre.
+   *
+   * `span` is that clamp on its own, for the one thing here that is not an
+   * animation but a meter: a ring counting down to a flag has to be honest
+   * about how much time is left, and an ease-out is three quarters closed at
+   * half way. Everything else eases, and easeOut still has exactly one caller,
+   * which is what keeps the explosion above from coming back. */
+  function span(now, t0, duration) {
+    return clamp((now - t0) / duration, 0, 1);
+  }
+
   function progress(now, t0, duration) {
-    return easeOut(clamp((now - t0) / duration, 0, 1));
+    return easeOut(span(now, t0, duration));
   }
 
   /* ---- bodies ------------------------------------------------------------
@@ -679,7 +689,7 @@
        * cell you open, cascades included, which is the thing the window exists
        * to avoid. */
       function drawPendingFlag(px, py, size, now) {
-        const p = progress(now, state.pendingFlagAt, state.pendingFlagMs);
+        const p = span(now, state.pendingFlagAt, state.pendingFlagMs);
         const marks = activeBody(theme, state.body);
         ctx.strokeStyle = (marks && marks.flag) || theme.flag;
         ctx.globalAlpha = 0.45 + 0.45 * p;
@@ -819,6 +829,6 @@
   global.GS = global.GS || {};
   global.GS.renderer = {
     createRenderer, THEMES, BODIES, revealScale, progress, foreshorten, LABEL_RATIO,
-    buildTerrain, bodyForBoard, activeBody, cellFill, REVEAL_MS, FLAG_MS
+    buildTerrain, bodyForBoard, activeBody, cellFill, span, REVEAL_MS, FLAG_MS
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
