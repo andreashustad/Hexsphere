@@ -13,6 +13,176 @@
 
   const easeOut = (t) => 1 - Math.pow(1 - t, 3);
 
+  /* Eased 0..1 progress since a stamped time. Every animation here goes through
+   * this, because the stamps can be in the future: the reveal wave sets them
+   * ahead on purpose so the cascade ripples outward, and a pointer event can
+   * land after the frame's timestamp was taken. easeOut is a cubic, so an
+   * unclamped input does not degrade, it explodes: an age of -2.2s once drew a
+   * flag 27,000 pixels wide, mirrored through its own centre. */
+  function progress(now, t0, duration) {
+    return easeOut(clamp((now - t0) / duration, 0, 1));
+  }
+
+  /* ---- bodies ------------------------------------------------------------
+   *
+   * Every board size is a place, not just a cell count. A body owns the
+   * covered surface, the sky, the light and the halo; the theme keeps the
+   * numbers, the revealed cells and the chrome, because those are what you
+   * read rather than what you look at.
+   *
+   * A cleared cell still takes a trace of its body (revealedMix), or the whole
+   * art direction would fade out exactly as you play: covered cells are the
+   * ones you spend the game removing.
+   */
+  const BODIES = {
+    pebble: {
+      id: 'pebble', frequency: 3, cells: 92,
+      sky: ['#0c0a07', '#1c1610'], hidden: '#6f5c46', tint: '#3a2f25', pentagon: '#806c55',
+      surface: 'craters', freq: 5, amount: 0.85, revealedMix: 0.12,
+      glow: 'rgba(196,164,122,0.14)', light: [-0.5, 0.66, 0.56]
+    },
+    moon: {
+      id: 'moon', frequency: 4, cells: 162,
+      sky: ['#04050a', '#0a0c13'], hidden: '#b2aea8', tint: '#4b4845', pentagon: '#bcb8b2',
+      surface: 'craters', freq: 3.4, amount: 0.92, revealedMix: 0.10,
+      glow: 'rgba(226,226,220,0.09)', light: [-0.62, 0.52, 0.58]
+    },
+    /* Low roughness keeps the base octave dominant, which is the difference
+     * between continents and a scatter of islands. */
+    earth: {
+      id: 'earth', frequency: 5, cells: 252,
+      sky: ['#04070f', '#0a1126'], hidden: '#15537f', tint: '#44724a', pentagon: '#1c5c8d',
+      surface: 'continents', land: 0.50, freq: 1.25, roughness: 0.25, amount: 0.95,
+      revealedMix: 0.14,
+      glow: 'rgba(86,166,255,0.42)', haloInner: 0.9, haloOuter: 1.22, light: [-0.45, 0.7, 0.75]
+    },
+    neptune: {
+      id: 'neptune', frequency: 7, cells: 492,
+      sky: ['#03040e', '#060b20'], hidden: '#3f6ad2', tint: '#0e1f52', pentagon: '#4a72d6',
+      surface: 'bands', freq: 9, amount: 1.0, revealedMix: 0.12,
+      glow: 'rgba(116,146,255,0.36)', haloInner: 0.88, haloOuter: 1.26, light: [-0.4, 0.66, 0.78]
+    },
+    /* Self-luminous, so the light is nearly flat. Its own marks too: the
+     * theme's red flag disappears into orange. */
+    sun: {
+      id: 'sun', frequency: 9, cells: 812,
+      sky: ['#0b0400', '#210c02'], hidden: '#d9661a', tint: '#ffdf7a', pentagon: '#e8812c',
+      surface: 'granules', freq: 7, amount: 0.8, lightMix: 0.25, revealedMix: 0.16,
+      glow: 'rgba(255,164,48,0.58)', haloInner: 0.74, haloOuter: 1.5,
+      flag: '#14123a', flagPole: '#f6e7cf', light: [0, 0, 1]
+    }
+  };
+
+  /* A custom board borrows the body of the preset it is closest to in size, so
+   * it still lands somewhere rather than falling back to a neutral grey. */
+  function bodyForBoard(difficultyId, cellCount) {
+    if (BODIES[difficultyId]) return BODIES[difficultyId];
+    let best = null;
+    let bestGap = Infinity;
+    for (const id of Object.keys(BODIES)) {
+      const gap = Math.abs(BODIES[id].cells - cellCount);
+      if (gap < bestGap) { bestGap = gap; best = BODIES[id]; }
+    }
+    return best;
+  }
+
+  /* High contrast exists so the board stays readable with any common colour
+   * blindness. A planet painted over it would undo exactly that, so the body
+   * is dropped outright there rather than blended more gently. The sky and the
+   * halo are left alone on purpose: they carry no cell state, no number and no
+   * mark, so tinting them costs no readability. */
+  function activeBody(theme, body) {
+    if (!body) return null;
+    return theme && theme.name === 'High contrast' ? null : body;
+  }
+
+  /* ---- surface ------------------------------------------------------------ */
+
+  function hash3(i, j, k) {
+    let h = i * 374761393 + j * 668265263 + k * 2147483647;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return ((h ^ (h >> 16)) >>> 0) / 4294967295;
+  }
+
+  function smoothstep(a, b, t) {
+    const x = clamp((t - a) / (b - a), 0, 1);
+    return x * x * (3 - 2 * x);
+  }
+
+  function valueNoise(x, y, z) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = x - xi, yf = y - yi, zf = z - zi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+    let acc = 0;
+    for (let dz = 0; dz <= 1; dz++) {
+      for (let dy = 0; dy <= 1; dy++) {
+        for (let dx = 0; dx <= 1; dx++) {
+          acc += hash3(xi + dx, yi + dy, zi + dz) *
+            (dx ? u : 1 - u) * (dy ? v : 1 - v) * (dz ? w : 1 - w);
+        }
+      }
+    }
+    return acc;
+  }
+
+  /* roughness 1 is full detail; lower keeps the base octave dominant. */
+  function fbm(x, y, z, roughness) {
+    const r = roughness === undefined ? 1 : roughness;
+    const w1 = 0.3 * r, w2 = 0.1 * r;
+    return valueNoise(x, y, z) * (1 - w1 - w2)
+      + valueNoise(x * 2.1, y * 2.1, z * 2.1) * w1
+      + valueNoise(x * 4.3, y * 4.3, z * 4.3) * w2;
+  }
+
+  /* One deterministic 0..1 surface value per cell, from the cell's own place on
+   * the sphere. Built once per board in setSphere, never per frame. */
+  function buildTerrain(sphere, body) {
+    const n = sphere.count;
+    const out = new Float32Array(n);
+    if (!body || !body.surface || body.surface === 'none') return out;
+    const f = body.freq || 4;
+    /* Feature size is counted in cells, not radians, so one treatment holds up
+     * from 92 cells to 1442. */
+    const scale = f * Math.sqrt(n / 252);
+
+    const raw = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = sphere.centers[i * 3], y = sphere.centers[i * 3 + 1], z = sphere.centers[i * 3 + 2];
+      raw[i] = body.surface === 'bands'
+        ? 0.5 + 0.5 * Math.sin(y * f * 1.9 + Math.sin(y * f * 0.7) * 1.4)
+        : fbm(x * scale, y * scale, z * scale, body.roughness);
+    }
+
+    /* Normalise before shaping. The noise does not reliably span [0, 1], and
+     * shaping an unnormalised range is what silently flattened Earth to a
+     * single value at every cell. The test named after this guards it. */
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) { if (raw[i] < lo) lo = raw[i]; if (raw[i] > hi) hi = raw[i]; }
+    const span = (hi - lo) || 1;
+
+    for (let i = 0; i < n; i++) {
+      let v = (raw[i] - lo) / span;
+      if (body.surface === 'continents') {
+        const cut = body.land === undefined ? 0.5 : body.land;
+        v = smoothstep(cut - 0.06, cut + 0.10, v);
+      } else if (body.surface === 'craters') {
+        v = Math.pow(v, 1.4);
+      } else if (body.surface === 'granules') {
+        v = 0.5 + 0.5 * Math.sin(v * 14);
+      }
+      out[i] = clamp(v, 0, 1);
+    }
+    return out;
+  }
+
+  function mixHex(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const r = Math.round(((pa >> 16) & 255) * (1 - t) + ((pb >> 16) & 255) * t);
+    const g = Math.round(((pa >> 8) & 255) * (1 - t) + ((pb >> 8) & 255) * t);
+    const bl = Math.round((pa & 255) * (1 - t) + (pb & 255) * t);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+  }
+
   /* Reveal wave: a cell grows from 45% to full size over REVEAL_MS.
    * markRevealed stamps each cell with a *future* time so the wave ripples
    * outward from the tap, which means the age below is negative until a cell's
@@ -23,7 +193,7 @@
   const CELL_SCALE = 0.9;
 
   function revealScale(now, t0) {
-    return CELL_SCALE * (0.45 + 0.55 * easeOut(clamp((now - t0) / REVEAL_MS, 0, 1)));
+    return CELL_SCALE * (0.45 + 0.55 * progress(now, t0, REVEAL_MS));
   }
 
   const THEMES = {
@@ -135,6 +305,7 @@
 
     function setSphere(sphere) {
       state.sphere = sphere;
+      state.terrain = buildTerrain(sphere, state.body);
       rotCorners = new Float32Array(sphere.corners.length);
       projCorners = new Float32Array((sphere.corners.length / 3) * 2);
       rotCenters = new Float32Array(sphere.centers.length);
@@ -218,9 +389,14 @@
 
     function paintBackground(now) {
       const t = state.theme;
+      /* The sky and the halo follow the body in every theme, high contrast
+       * included: they hold no cell state, no number and no mark, so they cost
+       * no readability, and without them the globes look airless. */
+      const b = state.body;
+      const sky = (b && b.sky) || t.background;
       const g = ctx.createLinearGradient(0, 0, 0, state.height);
-      g.addColorStop(0, t.background[0]);
-      g.addColorStop(1, t.background[1]);
+      g.addColorStop(0, sky[0]);
+      g.addColorStop(1, sky[1]);
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, state.width, state.height);
 
@@ -234,9 +410,9 @@
       }
 
       const glow = ctx.createRadialGradient(
-        state.cx, state.cy, state.radius * 0.85,
-        state.cx, state.cy, state.radius * 1.28);
-      glow.addColorStop(0, t.glow);
+        state.cx, state.cy, state.radius * ((b && b.haloInner) || 0.85),
+        state.cx, state.cy, state.radius * ((b && b.haloOuter) || 1.28));
+      glow.addColorStop(0, (b && b.glow) || t.glow);
       glow.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = glow;
       ctx.beginPath();
@@ -261,6 +437,7 @@
       const game = state.game;
       if (!sphere) return;
       const theme = state.theme;
+      const body = activeBody(theme, state.body);
       now = now || performance.now();
 
       projectAll();
@@ -298,16 +475,27 @@
           }
         }
 
-        const diffuse = clamp(nx * LIGHT[0] + ny * LIGHT[1] + cz * LIGHT[2], -1, 1);
+        /* A body may steer the light, and a self-luminous one flattens it. */
+        const L = (body && body.light) || LIGHT;
+        const lit = body && body.lightMix !== undefined ? body.lightMix : 1;
+        const diffuse = clamp(nx * L[0] + ny * L[1] + cz * L[2], -1, 1) * lit;
         const limb = clamp(cz, 0, 1);
 
         let fill;
         if (revealed) {
-          fill = shade(theme.revealed, 0.06 * diffuse + 0.10 * limb);
+          /* A cleared cell keeps a trace of its world. Small, deliberately:
+           * this is the surface the numbers are read against. */
+          const base = body
+            ? mixHex(theme.revealed, body.hidden, body.revealedMix === undefined ? 0.12 : body.revealedMix)
+            : theme.revealed;
+          fill = shade(base, 0.06 * diffuse + 0.10 * limb);
         } else if (state.showPentagons && ring.length === 5) {
-          fill = shade(theme.hiddenPentagon, 0.30 * diffuse + 0.10 * limb - 0.12);
+          fill = shade((body && body.pentagon) || theme.hiddenPentagon, 0.30 * diffuse + 0.10 * limb - 0.12);
         } else {
-          fill = shade(theme.hidden, 0.34 * diffuse + 0.12 * limb - 0.12);
+          const base = body
+            ? mixHex(body.hidden, body.tint, (state.terrain ? state.terrain[i] : 0) * (body.amount || 0.5))
+            : theme.hidden;
+          fill = shade(base, 0.34 * diffuse + 0.12 * limb - 0.12);
         }
         if (isMine && !revealed) fill = theme.mineBody;
         if (state.pressedCell === i && !revealed) fill = shade(theme.hiddenLight, 0.1);
@@ -401,15 +589,18 @@
       function drawFlag(px, py, size, now, index) {
         const t0 = state.flagAt[index];
         let s = size;
-        if (t0 && now - t0 < 220) { s = size * (0.5 + 0.5 * easeOut((now - t0) / 220)); animating = true; }
+        if (t0 && now - t0 < 220) { s = size * (0.5 + 0.5 * progress(now, t0, 220)); animating = true; }
         const h = s * 0.62;
-        ctx.strokeStyle = theme.flagPole;
+        /* The theme's marks are tuned against navy. A body far off blue, the
+         * Sun above all, restates them or its flags vanish into its surface. */
+        const marks = activeBody(theme, state.body);
+        ctx.strokeStyle = (marks && marks.flagPole) || theme.flagPole;
         ctx.lineWidth = Math.max(0.8, s * 0.09);
         ctx.beginPath();
         ctx.moveTo(px - h * 0.18, py + h * 0.55);
         ctx.lineTo(px - h * 0.18, py - h * 0.6);
         ctx.stroke();
-        ctx.fillStyle = theme.flag;
+        ctx.fillStyle = (marks && marks.flag) || theme.flag;
         ctx.beginPath();
         ctx.moveTo(px - h * 0.18, py - h * 0.6);
         ctx.lineTo(px + h * 0.62, py - h * 0.26);
@@ -420,9 +611,8 @@
 
       function drawMine(px, py, r, exploded, now) {
         if (exploded) {
-          const age = now - state.explodedAt;
-          const k = clamp(age / 420, 0, 1);
-          const blast = r * (1 + 2.4 * easeOut(k));
+          const k = clamp((now - state.explodedAt) / 420, 0, 1);
+          const blast = r * (1 + 2.4 * progress(now, state.explodedAt, 420));
           ctx.globalAlpha = (1 - k) * 0.8;
           ctx.fillStyle = theme.mine;
           ctx.beginPath();
@@ -520,5 +710,8 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.renderer = { createRenderer, THEMES, revealScale };
+  global.GS.renderer = {
+    createRenderer, THEMES, BODIES, revealScale, progress,
+    buildTerrain, bodyForBoard, activeBody
+  };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

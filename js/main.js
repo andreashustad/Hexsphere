@@ -147,6 +147,8 @@
       warnedUnguaranteed: false
     };
 
+    /* Before setSphere: the body decides the surface that setSphere builds. */
+    renderer.state.body = rendererApi.bodyForBoard(plan.difficulty.id, plan.sphere.count);
     renderer.setSphere(plan.sphere);
     renderer.state.game = current.game;
     renderer.state.showMines = false;

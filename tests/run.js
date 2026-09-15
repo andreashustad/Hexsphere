@@ -716,6 +716,58 @@ describe('ranking rules', function () {
   });
 });
 
+/* ---- bodies --------------------------------------------------------------- */
+
+/* Each board size is a named body (Pebble, Moon, Earth, Neptune, Sun) with its
+ * own surface, sky and light. The surface is a 0..1 value per cell, computed
+ * once per board.
+ *
+ * The first test is a regression guard with a story: the treatments were built
+ * on noise that did not span [0, 1], so the shaping functions crushed them and
+ * Earth's terrain came out as 0.000 at all 252 cells. Nothing threw, nothing
+ * failed, the planet was just flat. A surface that does not vary is the bug. */
+describe('bodies', function () {
+  const { BODIES, buildTerrain, bodyForBoard, activeBody, THEMES } = GS.renderer;
+
+  it('gives every textured body a surface that actually varies', function () {
+    for (const id of Object.keys(BODIES)) {
+      const body = BODIES[id];
+      if (!body.surface || body.surface === 'none') continue;
+      const terrain = buildTerrain(buildSphere(body.frequency), body);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < terrain.length; i++) {
+        if (terrain[i] < lo) lo = terrain[i];
+        if (terrain[i] > hi) hi = terrain[i];
+      }
+      assert(hi - lo > 0.5, id + ' surface spans only ' + lo.toFixed(3) + '..' + hi.toFixed(3));
+    }
+  });
+
+  it('builds the same surface every time, so a board does not shimmer', function () {
+    const sphere = buildSphere(4);
+    const a = buildTerrain(sphere, BODIES.moon);
+    const b = buildTerrain(sphere, BODIES.moon);
+    for (let i = 0; i < a.length; i++) equal(a[i], b[i], 'cell ' + i + ' differs between builds');
+  });
+
+  it('leaves the surface flat when a body declares none', function () {
+    const terrain = buildTerrain(buildSphere(3), { surface: 'none' });
+    for (let i = 0; i < terrain.length; i++) equal(terrain[i], 0, 'cell ' + i);
+  });
+
+  it('gives a custom board the body of the nearest preset size', function () {
+    equal(bodyForBoard('custom', 92), BODIES.pebble, 'a tiny custom board is a pebble');
+    equal(bodyForBoard('custom', 1442), BODIES.sun, 'a huge one is a sun');
+    equal(bodyForBoard('earth', 252), BODIES.earth, 'a named size uses its own body');
+  });
+
+  it('suppresses the body entirely in the high contrast theme', function () {
+    equal(activeBody(THEMES.vivid, BODIES.earth), null,
+      'the colour-blind palette must not be overpainted by a planet');
+    equal(activeBody(THEMES.midnight, BODIES.earth), BODIES.earth, 'but every other theme keeps it');
+  });
+});
+
 /* ---- renderer ------------------------------------------------------------- */
 
 /* markRevealed stamps each cell with a *future* time, so the reveal ripples
@@ -741,6 +793,21 @@ describe('renderer', function () {
   it('grows the cell to full size by the end of the wave', function () {
     equal(revealScale(260, 0), 0.9, 'fully popped');
     assert(revealScale(130, 0) > revealScale(0, 0), 'and grows on the way there');
+  });
+
+  /* Every animation here eases on a stamped time, and those times can sit in
+   * the future: the reveal wave stamps them ahead deliberately, and a pointer
+   * event can land after the frame's timestamp was taken. Unclamped, the
+   * easing runs away, which is how a flag once drew 27,000 pixels wide. One
+   * shared helper means the next animation cannot reintroduce it. */
+  it('keeps every animation between not-started and finished', function () {
+    const { progress } = GS.renderer;
+    for (const age of [-90000, -2206, -220, -1, 0, 1, 110, 219, 220, 900, 90000]) {
+      const p = progress(0, -age, 220);
+      assert(p >= 0 && p <= 1, 'progress at age ' + age + 'ms was ' + p);
+    }
+    equal(progress(0, 0, 220), 0, 'not started');
+    equal(progress(220, 0, 220), 1, 'finished');
   });
 });
 

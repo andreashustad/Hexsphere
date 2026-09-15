@@ -41,6 +41,23 @@ bytes were unchanged so no new worker installed. A failed refresh resolves to
 undefined rather than rejecting, which is what keeps offline play working, so
 keep that `.catch`.
 
+**Every animation eases through `progress()`, and that is not optional.**
+`easeOut` is a cubic, so feeding it a value outside `[0, 1]` does not degrade,
+it explodes. Animation times here can legitimately sit in the future: the reveal
+wave stamps them ahead on purpose, and a pointer event can land after the
+frame's timestamp was taken. Two separate bugs came from this, a cell painted at
+65x mirrored and a flag drawn 27,000 pixels wide. `easeOut` is now called from
+exactly one place. Keep it that way rather than adding a second eased animation
+with its own guard.
+
+**Bodies and themes are separate axes, and must stay that way.** A body owns the
+covered surface, sky, halo and light; a theme owns the numbers, revealed cells
+and chrome. Collapsing them means maintaining five worlds times three themes
+instead of five plus three, and it puts body colour underneath the numbers. The
+high-contrast theme drops the body via `activeBody()`, because that palette
+exists for colour-blind readability. The sky and halo are exempt on purpose:
+they hold no cell state, number or mark.
+
 **Only covered cells wait out the double-tap window.** `input.makeTapHandler`
 sends a tap on a revealed cell straight to chord, because that tap cannot mean
 anything else. Routing every tap through the window instead would look tidier

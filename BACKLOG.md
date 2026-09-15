@@ -55,12 +55,10 @@ Agreed 2026-09-15 that all three axes (looks, feel, content) are in play.
 complaint: the reveal wave painted garbage over every cascade, and a silently
 unguaranteed board is why one occasionally felt unfair.
 
-**2. Art direction.** The board names already promise an art direction nothing
-backs up: Pebble, Moon, Earth, Neptune, Sun all render as the same blue hex ball
-on the same starfield. Make each body distinct in surface, palette, lighting and
-sky, and give the typography a point of view. Self-contained in `styles.css`,
-the renderer's shading and the theme tokens; touches no game logic. The menu
-itself is competent and is not the problem.
+**2. Art direction.** Done. Each board size is now a body with its own surface,
+sky, halo and light, composing with the theme rather than replacing it. Typography
+was deliberately left out and is still available as a separate, smaller piece of
+work: the menu and HUD are still system font.
 
 **3. Feel.** Animation timing, spin weight, haptics, the tactility of a cascade
 and a flag. Deliberately after 1 and 2: tuning timings against a correct

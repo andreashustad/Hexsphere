@@ -18,6 +18,7 @@ completely offline.
 | **Guaranteed solvable boards** | Every board is checked by a solver that only makes provable deductions before you ever see it. If the board would force a coin flip, it is rebuilt. Losing is always a misread, never bad luck. |
 | **Hints that explain themselves** | The hint button points at a cell you could already have worked out and says *why* — "provably safe", "provably a mine", or "that flag is wrong". |
 | **Exact odds when you do gamble** | Turn the guarantee off and, if a position really is ambiguous, the hint ranks the safest cell using exact probabilities computed over every consistent mine arrangement. |
+| **Five worlds, not five numbers** | Each board size is a place. Pebble is rough warm rock, Moon is grey maria, Earth has continents and a blue atmosphere, Neptune is banded, Sun is a granulated star with a corona. The surface is computed from each cell's own position, so it is the same world every time you play that size. |
 | **Casual mode** | One fatal tap can be stepped back, and the mine gets flagged for you. |
 | **Daily challenge** | The same board for everyone, derived from the date, pre-opened at the same cell. |
 | **Sizes from 92 to 1442 cells** | Five presets plus a custom board where you pick the cell count and the mine density. |
@@ -118,6 +119,18 @@ convex, so culling alone gives correct draw order) and per-cell diffuse shading.
 Picking casts a ray onto the sphere and takes the nearest cell centre — the cells
 *are* the Voronoi regions of their centres, so that is exact. No WebGL and no
 libraries, which is what keeps the whole game a handful of small files.
+
+**Bodies and themes** are deliberately separate axes. A body owns what you look
+at: the covered surface, the sky, the halo and the direction of the light. A
+theme owns what you read: the numbers, the revealed cells and the chrome. They
+compose, so five worlds and three themes cost five palettes plus three rather
+than fifteen. Value noise on the cell's own position gives each body its surface
+(continents, craters, bands, granulation), computed once per board and scaled by
+cell count so one treatment holds from 92 cells to 1442. A cleared cell keeps a
+small trace of its body, or the art direction would fade out exactly as you play.
+The high-contrast theme drops the body outright, because its palette exists to
+stay readable with any common colour blindness and a planet painted over it would
+undo that.
 
 ## Tests
 
