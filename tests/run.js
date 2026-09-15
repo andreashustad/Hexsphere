@@ -22,7 +22,7 @@ sandbox.localStorage = {
 };
 
 vm.createContext(sandbox);
-for (const name of ['util', 'geometry', 'solver', 'game', 'storage']) {
+for (const name of ['util', 'geometry', 'solver', 'game', 'storage', 'renderer']) {
   const file = path.join(__dirname, '..', 'js', name + '.js');
   vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
 }
@@ -47,14 +47,28 @@ function describe(name, fn) {
   fn();
 }
 
+/* A test may return a promise; those settle before the summary is printed. */
+const pending = [];
+
 function it(name, fn) {
-  try {
-    fn();
+  const where = group + ' > ' + name;
+  function ok() {
     passed++;
     console.log('  ' + GREEN + 'ok' + OFF + '   ' + name);
-  } catch (err) {
-    failures.push({ name: group + ' > ' + name, err });
+  }
+  function bad(err) {
+    failures.push({ name: where, err });
     console.log('  ' + RED + 'FAIL' + OFF + ' ' + name + '\n       ' + err.message);
+  }
+  try {
+    const result = fn();
+    if (result && typeof result.then === 'function') {
+      pending.push(result.then(ok, bad));
+      return;
+    }
+    ok();
+  } catch (err) {
+    bad(err);
   }
 }
 
@@ -518,12 +532,173 @@ describe('storage', function () {
   });
 });
 
+/* ---- renderer ------------------------------------------------------------- */
+
+/* markRevealed stamps each cell with a *future* time, so the reveal ripples
+ * outward from the tap. Every cell in a cascade therefore spends time with a
+ * negative age, and the scale it paints at must survive that. */
+describe('renderer', function () {
+  const { revealScale } = GS.renderer;
+
+  it('never paints a cell inverted or larger than full size', function () {
+    const deepest = 60 * 26; /* deeper than any cascade the 1442-cell board can produce */
+    for (let age = -deepest; age <= 1000; age += 7) {
+      const scale = revealScale(0, -age);
+      assert(scale >= 0 && scale <= 0.9, 'scale at age ' + age + 'ms was ' + scale);
+    }
+  });
+
+  it('holds a cell at its starting size until its turn in the wave arrives', function () {
+    const start = revealScale(0, 0);
+    equal(revealScale(0, 1066), start, 'a cell 41 levels deep waits, it does not invert');
+    equal(revealScale(0, 26), start, 'nor does the cell one level out');
+  });
+
+  it('grows the cell to full size by the end of the wave', function () {
+    equal(revealScale(260, 0), 0.9, 'fully popped');
+    assert(revealScale(130, 0) > revealScale(0, 0), 'and grows on the way there');
+  });
+});
+
+/* ---- service worker ------------------------------------------------------- */
+
+/* The service worker is the delivery mechanism: if it serves a stale cached
+ * copy and never refreshes it, a fix pushed to Pages never reaches a browser
+ * that already installed the game. That is worth testing, so sw.js is loaded
+ * into a fake worker global with a fake Cache Storage and a fake network. */
+function loadServiceWorker() {
+  const listeners = {};
+  const cacheStore = new Map();
+  const network = new Map();
+  const waits = [];
+  let versionCache = null;
+
+  const urlOf = (req) => (typeof req === 'string' ? req : req.url);
+
+  function response(body) {
+    return { body, status: 200, type: 'basic', clone: () => response(body) };
+  }
+
+  function makeCache() {
+    const entries = new Map();
+    return {
+      entries,
+      match: (req) => Promise.resolve(entries.get(urlOf(req))),
+      put: (req, res) => { entries.set(urlOf(req), res); return Promise.resolve(); },
+      addAll: (urls) => {
+        for (const u of urls) entries.set(u, response('precached ' + u));
+        return Promise.resolve();
+      }
+    };
+  }
+
+  const caches = {
+    open: (name) => {
+      if (!cacheStore.has(name)) cacheStore.set(name, makeCache());
+      if (versionCache === null) versionCache = name;
+      return Promise.resolve(cacheStore.get(name));
+    },
+    keys: () => Promise.resolve(Array.from(cacheStore.keys())),
+    delete: (name) => { cacheStore.delete(name); return Promise.resolve(true); },
+    match: (req) => {
+      for (const cache of cacheStore.values()) {
+        const hit = cache.entries.get(urlOf(req));
+        if (hit) return Promise.resolve(hit);
+      }
+      return Promise.resolve(undefined);
+    }
+  };
+
+  const sandbox = {
+    caches,
+    Request: function (url, opts) {
+      this.url = url;
+      this.method = 'GET';
+      this.cache = opts && opts.cache;
+    },
+    fetch: (req) => {
+      const url = urlOf(req);
+      if (!network.has(url)) return Promise.reject(new Error('offline: ' + url));
+      return Promise.resolve(response(network.get(url)));
+    },
+    self: {
+      addEventListener: (type, fn) => { listeners[type] = fn; },
+      skipWaiting: () => Promise.resolve(),
+      clients: { claim: () => Promise.resolve() }
+    }
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  const swFile = path.join(__dirname, '..', 'sw.js');
+  vm.runInContext(fs.readFileSync(swFile, 'utf8'), sandbox, { filename: swFile });
+
+  function drive(type, extra) {
+    const local = [];
+    const event = Object.assign({ waitUntil: (p) => { local.push(p); waits.push(p); } }, extra);
+    listeners[type](event);
+    return { event, settled: () => Promise.all(local) };
+  }
+
+  return {
+    install: () => drive('install').settled(),
+    request(url) {
+      let responded = Promise.resolve(undefined);
+      const run = drive('fetch', {
+        request: { url, method: 'GET' },
+        respondWith: (p) => { responded = p; }
+      });
+      return responded.then((res) => ({ res, settled: run.settled }));
+    },
+    seed(url, body) { cacheStore.get(versionCache).entries.set(url, response(body)); },
+    setNetwork(url, body) { network.set(url, body); },
+    cached(url) {
+      const hit = cacheStore.get(versionCache).entries.get(url);
+      return hit && hit.body;
+    },
+    offline() { network.clear(); }
+  };
+}
+
+const ASSET = 'https://hexsphere.test/js/game.js';
+
+describe('service worker', function () {
+  it('refreshes a cached asset so a pushed fix reaches an installed client', function () {
+    const sw = loadServiceWorker();
+    return sw.install().then(function () {
+      sw.seed(ASSET, 'old bytes');
+      sw.setNetwork(ASSET, 'new bytes');
+      return sw.request(ASSET);
+    }).then(function (hit) {
+      equal(hit.res.body, 'old bytes', 'the cached copy is served at once, so the game stays instant');
+      return hit.settled();
+    }).then(function () {
+      equal(sw.cached(ASSET), 'new bytes', 'the cache now holds the fix, so the next load picks it up');
+    });
+  });
+
+  it('still serves from cache with no network at all', function () {
+    const sw = loadServiceWorker();
+    return sw.install().then(function () {
+      sw.seed(ASSET, 'cached bytes');
+      sw.offline();
+      return sw.request(ASSET);
+    }).then(function (hit) {
+      equal(hit.res.body, 'cached bytes', 'offline play must keep working');
+      return hit.settled();
+    }).then(function () {
+      equal(sw.cached(ASSET), 'cached bytes', 'a failed refresh must not evict the copy we have');
+    });
+  });
+});
+
 /* ---- summary --------------------------------------------------------------- */
 
-console.log('');
-if (failures.length) {
-  console.log(RED + failures.length + ' failing' + OFF + ', ' + passed + ' passing\n');
-  for (const f of failures) console.log('  ' + f.name + '\n    ' + (f.err.stack || f.err.message) + '\n');
-  process.exit(1);
-}
-console.log(GREEN + 'all ' + passed + ' tests passing' + OFF + '\n');
+Promise.all(pending).then(function () {
+  console.log('');
+  if (failures.length) {
+    console.log(RED + failures.length + ' failing' + OFF + ', ' + passed + ' passing\n');
+    for (const f of failures) console.log('  ' + f.name + '\n    ' + (f.err.stack || f.err.message) + '\n');
+    process.exit(1);
+  }
+  console.log(GREEN + 'all ' + passed + ' tests passing' + OFF + '\n');
+});

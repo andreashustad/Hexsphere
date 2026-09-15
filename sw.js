@@ -1,6 +1,12 @@
-/* Hexsphere service worker: precache everything, then serve from cache.
- * The game has no network features at all, so once installed it works
- * permanently offline — including on a phone in aeroplane mode. */
+/* Hexsphere service worker: precache everything, serve from cache, refresh in
+ * the background. The game has no network features at all, so once installed
+ * it works permanently offline — including on a phone in aeroplane mode.
+ *
+ * The background refresh is what makes a deploy reachable. Serving a cache hit
+ * and stopping there means a fix pushed to the site never arrives at a browser
+ * that already has the file, because this worker's own bytes did not change so
+ * no new worker installs. Bumping VERSION by hand fixes that too, right up to
+ * the one deploy where it is forgotten. */
 const VERSION = 'hexsphere-v1';
 const ASSETS = [
   './',
@@ -25,7 +31,8 @@ const ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(VERSION)
-      .then((cache) => cache.addAll(ASSETS))
+      /* cache: 'reload' so a stale HTTP cache cannot seed the precache. */
+      .then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -40,17 +47,26 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  /* Ask the network every time, but never wait for it when we already hold a
+   * copy. A failed refresh resolves to undefined rather than rejecting, so
+   * being offline leaves the cached copy untouched. */
+  const refresh = fetch(event.request).then((response) => {
+    if (response && response.status === 200 && response.type === 'basic') {
+      const copy = response.clone();
+      return caches.open(VERSION)
+        .then((cache) => cache.put(event.request, copy))
+        .then(() => response);
+    }
+    return response;
+  }).catch(() => undefined);
+
+  /* waitUntil has to be called while the event is still being dispatched, so
+   * it goes here rather than inside the cache lookup below. */
+  event.waitUntil(refresh);
+
   event.respondWith(
-    caches.match(event.request).then((hit) => {
-      if (hit) return hit;
-      return fetch(event.request).then((response) => {
-        /* Keep the cache warm for anything fetched later (e.g. a new icon). */
-        if (response && response.status === 200 && response.type === 'basic') {
-          const copy = response.clone();
-          caches.open(VERSION).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      }).catch(() => caches.match('./index.html'));
-    })
+    caches.match(event.request)
+      .then((hit) => hit || refresh.then((response) => response || caches.match('./index.html')))
   );
 });

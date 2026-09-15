@@ -11,6 +11,21 @@
 
   const { V, Q, clamp } = global.GS.util;
 
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+
+  /* Reveal wave: a cell grows from 45% to full size over REVEAL_MS.
+   * markRevealed stamps each cell with a *future* time so the wave ripples
+   * outward from the tap, which means the age below is negative until a cell's
+   * turn arrives. The clamp is what keeps that from running the easing far
+   * outside [0, 1]: unclamped, a cell 41 levels deep eases to -131 and paints
+   * its corners mirrored through its own centre at 65x, filling the canvas. */
+  const REVEAL_MS = 260;
+  const CELL_SCALE = 0.9;
+
+  function revealScale(now, t0) {
+    return CELL_SCALE * (0.45 + 0.55 * easeOut(clamp((now - t0) / REVEAL_MS, 0, 1)));
+  }
+
   const THEMES = {
     midnight: {
       name: 'Midnight',
@@ -241,8 +256,6 @@
       return 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')';
     }
 
-    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-
     function render(now) {
       const sphere = state.sphere;
       const game = state.game;
@@ -276,12 +289,11 @@
         const isMine = game && (state.showMines || game.state === 'lost') && game.mines[i];
 
         /* Reveal wave: cells pop outward from where the player tapped. */
-        let scale = 0.9;
+        let scale = CELL_SCALE;
         if (revealed) {
           const t0 = state.revealAt[i];
-          if (t0 && now - t0 < 260) {
-            const k = easeOut((now - t0) / 260);
-            scale = 0.9 * (0.45 + 0.55 * k);
+          if (t0 && now - t0 < REVEAL_MS) {
+            scale = revealScale(now, t0);
             animating = true;
           }
         }
@@ -508,5 +520,5 @@
   }
 
   global.GS = global.GS || {};
-  global.GS.renderer = { createRenderer, THEMES };
+  global.GS.renderer = { createRenderer, THEMES, revealScale };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
