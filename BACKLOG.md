@@ -64,6 +64,24 @@ work: the menu and HUD are still system font.
 and a flag. Deliberately after 1 and 2: tuning timings against a correct
 renderer and a settled look is the only way to tell whether a change helped.
 
+**3b. Difficulty axis (open, deliberately deferred 2026-09-15).** Size and
+difficulty are still welded together: you cannot play a small hard board. The
+measured case for a separate density setting, should it be wanted:
+
+- A hex sphere gives each cell 6 neighbours where square minesweeper gives 8, so
+  the same density leaves many more zero-cells. Square beginner/intermediate/
+  expert densities of 12.3/15.6/20.6% correspond to 16.1/20.3/26.5% here.
+- The shipped ladder runs 15.5% to 21%, so it spans roughly below-beginner to
+  intermediate. Nothing reaches expert.
+- The guess-free guarantee has a density ceiling that falls as boards grow.
+  Measured: Pebble is fine to 29.5%, Earth to about 28%, Sun to about 25%. At
+  30% on Sun, 0 of 25 boards could be made guess-free, after 288ms of trying.
+  Any difficulty ladder must therefore shrink its offsets as the board grows,
+  or offer the hardest levels only with the guarantee switched off.
+
+Deferred because the opening cap fixed the complaint that prompted it. Worth
+re-measuring the need after playing rather than assuming it.
+
 **4. Content.** Modes, progression, reasons to return beyond the daily. Largest
 and most speculative, and its answer depends on whether this stays a game for
 one person. Deferred until that is known.

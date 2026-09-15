@@ -296,6 +296,47 @@ describe('solver', function () {
     }
   });
 
+  /* The opening click is always a zero cell, because the solver needs a
+   * foothold, so it always cascades. On a small board that cascade was handing
+   * over two thirds of the game before the player had read anything. */
+  it('stops the first click from giving the board away', function () {
+    const sphere = buildSphere(3);
+    const mines = Math.round(sphere.count * 0.155);
+    let over = 0;
+    for (let r = 0; r < 12; r++) {
+      const g = GS.game.createGame({ sphere, mineCount: mines, seed: 'cap-' + r, noGuess: true });
+      g.openAt(r % sphere.count);
+      if (g.revealedCount / g.safeCells > 0.35) over++;
+    }
+    equal(over, 0, 'no opening should clear more than a third of the safe cells');
+  });
+
+  /* A cap the board comfortably meets must be accepted at once. Without this,
+   * a cap that silently evaluates to NaN still looks fine from the outside:
+   * every board is rejected, the fallback quietly minimises the opening
+   * instead of capping it, and the generator burns 200 solver runs per board
+   * to get there. That is exactly what happened. */
+  it('accepts a board that meets the cap instead of hunting for a smaller one', function () {
+    const sphere = buildSphere(5);
+    const g = GS.game.createGame({
+      sphere, mineCount: 48, seed: 'generous-cap', noGuess: true, maxOpening: 0.9
+    });
+    g.openAt(0);
+    assert(g.generation.attempts < 25,
+      'took ' + g.generation.attempts + ' attempts for a cap almost any board meets');
+    assert(!g.generation.openingOverCap, 'and did not fall back');
+  });
+
+  it('still finds a board when the cap cannot be met, rather than looping', function () {
+    const sphere = buildSphere(3);
+    const g = GS.game.createGame({
+      sphere, mineCount: 14, seed: 'impossible-cap', noGuess: true, maxOpening: 0.001
+    });
+    const result = g.openAt(0);
+    assert(result !== null, 'a board is still produced');
+    assert(g.revealedCount > 0, 'and it still opens something');
+  });
+
   it('generates boards that can be finished without guessing', function () {
     const cases = [
       { frequency: 3, density: 0.155 },

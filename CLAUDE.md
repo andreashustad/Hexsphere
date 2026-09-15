@@ -41,6 +41,16 @@ bytes were unchanged so no new worker installed. A failed refresh resolves to
 undefined rather than rejecting, which is what keeps offline play working, so
 keep that `.catch`.
 
+**`Object.assign` copies `undefined` over a default.** `generateBoard`'s
+`maxOpening` was defaulted inside the `Object.assign` and the caller passed
+`maxOpening: config.maxOpening`, which is `undefined` for a normal game. The cap
+became `NaN`, `reach <= NaN` is false for every board, so the generator rejected
+all of them, fell through to its "smallest opening seen" fallback and burned 200
+solver runs per board doing it. Nothing threw and the tests were green, because
+accidentally minimising the opening satisfied an assertion that only checked it
+was small enough. Default such options *after* the assign, and test that an easy
+constraint is accepted promptly rather than only testing the outcome.
+
 **Every animation eases through `progress()`, and that is not optional.**
 `easeOut` is a cubic, so feeding it a value outside `[0, 1]` does not degrade,
 it explodes. Animation times here can legitimately sit in the future: the reveal

@@ -113,6 +113,16 @@ in and it tries again — small local repairs, so the parts that already worked
 survive. In practice a guess-free board is found in a handful of milliseconds
 even at 1002 cells.
 
+It also caps how much the first click may clear. The opening is always a zero
+cell, because a guess-free board has to give the solver somewhere to start, so
+it always cascades; on 92 cells that cascade used to hand over two thirds of the
+board, and sometimes 96% of it, before you had read a single number. Moving
+mines closer to the opening does not help, because the generator then rejects
+those boards as unsolvable and draws another that cascades anyway: the guarantee
+itself is what demands a generous opening. Capping the cascade at a fifth of the
+safe cells and drawing again costs about a millisecond, because it only binds on
+the small boards, which are the cheap ones to generate.
+
 **The renderer** (`js/renderer.js`) is a small 3D engine on a plain 2D canvas:
 quaternion orientation, a perspective camera, back-face culling (the sphere is
 convex, so culling alone gives correct draw order) and per-cell diffuse shading.

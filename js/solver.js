@@ -457,8 +457,35 @@
     return field;
   }
 
+  /* How many cells the first click would clear on this field. */
+  function cascadeSize(sphere, field, start) {
+    const view = createView(sphere.count);
+    revealInto(sphere, field, adjacencyCounts(sphere, field), view, start, null);
+    let n = 0;
+    for (let i = 0; i < sphere.count; i++) if (view.revealed[i]) n++;
+    return n;
+  }
+
   function generateBoard(sphere, mineCount, start, rng, options) {
-    const opts = Object.assign({ noGuess: true, attempts: 40, repairs: 24, timeBudgetMs: 4000 }, options);
+    /* maxOpening caps the first click as a fraction of the safe cells.
+     *
+     * The opening is always a zero cell, because a guess-free board has to
+     * give the solver a foothold, so it always cascades. On 92 cells that
+     * cascade was handing over two thirds of the game before the player had
+     * read anything. Moving mines nearer the start does not help: the
+     * generator rejects those boards as unsolvable and draws another that
+     * cascades anyway, so the guarantee itself is what demands a big opening.
+     * Capping the cascade and drawing again is the lever that works, and it
+     * costs nothing because it only ever binds on the small boards, which are
+     * the fast ones to generate. */
+    const opts = Object.assign(
+      { noGuess: true, attempts: 40, repairs: 24, timeBudgetMs: 4000 },
+      options);
+    /* Not a default in the Object.assign above: a caller passing the key with
+     * an undefined value would overwrite it, and `reach <= NaN` is false for
+     * every board, which silently turns the cap into "minimise the opening"
+     * and burns every attempt doing it. */
+    const maxOpening = opts.maxOpening === undefined ? 0.2 : opts.maxOpening;
     const forbidden = new Uint8Array(sphere.count);
     forbidden[start] = 1;
     for (const nb of sphere.neighbors[start]) forbidden[nb] = 1;
@@ -466,30 +493,47 @@
     const openingSize = 1 + sphere.neighbors[start].length;
     const placeable = sphere.count - openingSize;
     const mines = Math.min(mineCount, placeable);
+    const cap = Math.max(openingSize, Math.floor((sphere.count - mines) * maxOpening));
 
     if (!opts.noGuess) {
-      return { field: scatter(sphere, mines, forbidden, rng), guaranteed: false, attempts: 0 };
+      let field = scatter(sphere, mines, forbidden, rng);
+      for (let i = 0; i < opts.attempts && cascadeSize(sphere, field, start) > cap; i++) {
+        field = scatter(sphere, mines, forbidden, rng);
+      }
+      return { field, guaranteed: false, attempts: 0 };
     }
 
     const started = Date.now();
     let best = null;
     let bestScore = -1;
     let attempts = 0;
+    /* The tightest solvable board found whose opening is still over the cap.
+     * A solvable board that opens too much beats an unsolvable one, so this is
+     * the fallback rather than giving up on the guarantee. */
+    let generous = null;
+    let generousReach = Infinity;
 
     for (let attempt = 0; attempt < opts.attempts; attempt++) {
       let field = scatter(sphere, mines, forbidden, rng);
       for (let repair = 0; repair <= opts.repairs; repair++) {
         attempts++;
         const result = solveBoard(sphere, field, mines, start, options);
-        if (result.solved) return { field, guaranteed: true, attempts };
+        if (result.solved) {
+          const reach = cascadeSize(sphere, field, start);
+          if (reach <= cap) return { field, guaranteed: true, attempts };
+          if (reach < generousReach) { generousReach = reach; generous = field.slice(); }
+          break;
+        }
         if (result.revealed > bestScore) { bestScore = result.revealed; best = field.slice(); }
         if (Date.now() - started > opts.timeBudgetMs) {
+          if (generous) return { field: generous, guaranteed: true, attempts, openingOverCap: true };
           return { field: best, guaranteed: false, attempts, timedOut: true };
         }
         field = nudge(sphere, field, result, forbidden, rng);
         if (!field) break;
       }
     }
+    if (generous) return { field: generous, guaranteed: true, attempts, openingOverCap: true };
     return { field: best, guaranteed: false, attempts };
   }
 
