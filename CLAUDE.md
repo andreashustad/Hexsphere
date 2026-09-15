@@ -41,6 +41,14 @@ bytes were unchanged so no new worker installed. A failed refresh resolves to
 undefined rather than rejecting, which is what keeps offline play working, so
 keep that `.catch`.
 
+**Board generation is synchronous and runs on the player's first tap**, so
+`timeBudgetMs` is a freeze budget, not a compute budget. Every board the game
+offers finishes far inside it (4002 cells at 19% takes about 4ms); it only binds
+just past the feasible density, where the solver keeps almost succeeding and
+grinds through every attempt. Note the shape: the worst case is at the edge of
+feasibility, not beyond it, because past the edge the solver fails fast. Any
+future change that raises density or board size trades directly against this.
+
 **`Object.assign` copies `undefined` over a default.** `generateBoard`'s
 `maxOpening` was defaulted inside the `Object.assign` and the caller passed
 `maxOpening: config.maxOpening`, which is `undefined` for a normal game. The cap

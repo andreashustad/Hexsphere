@@ -478,14 +478,18 @@
      * Capping the cascade and drawing again is the lever that works, and it
      * costs nothing because it only ever binds on the small boards, which are
      * the fast ones to generate. */
-    const opts = Object.assign(
-      { noGuess: true, attempts: 40, repairs: 24, timeBudgetMs: 4000 },
-      options);
-    /* Not a default in the Object.assign above: a caller passing the key with
-     * an undefined value would overwrite it, and `reach <= NaN` is false for
-     * every board, which silently turns the cap into "minimise the opening"
-     * and burns every attempt doing it. */
+    const opts = Object.assign({ noGuess: true, attempts: 40, repairs: 24 }, options);
+    /* Not defaults in the Object.assign above: a caller passing either key with
+     * an undefined value would overwrite it. That already bit once, when
+     * `reach <= NaN` was false for every board and silently turned the opening
+     * cap into "minimise the opening" at 200 solver runs apiece. */
     const maxOpening = opts.maxOpening === undefined ? 0.2 : opts.maxOpening;
+    /* Generation is synchronous and runs on the player's first tap, so this is
+     * a freeze budget, not a compute budget. Every board the game actually
+     * offers finishes far inside it: 4002 cells at 19% takes about 4ms. It only
+     * binds just past the feasible density, where the solver keeps almost
+     * succeeding and grinds through every attempt. */
+    const timeBudgetMs = opts.timeBudgetMs === undefined ? 500 : opts.timeBudgetMs;
     const forbidden = new Uint8Array(sphere.count);
     forbidden[start] = 1;
     for (const nb of sphere.neighbors[start]) forbidden[nb] = 1;
@@ -525,7 +529,7 @@
           break;
         }
         if (result.revealed > bestScore) { bestScore = result.revealed; best = field.slice(); }
-        if (Date.now() - started > opts.timeBudgetMs) {
+        if (Date.now() - started > timeBudgetMs) {
           if (generous) return { field: generous, guaranteed: true, attempts, openingOverCap: true };
           return { field: best, guaranteed: false, attempts, timedOut: true };
         }

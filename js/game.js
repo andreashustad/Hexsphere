@@ -50,7 +50,8 @@
     function generate(start) {
       const result = solver.generateBoard(sphere, game.mineCount, start, rng, {
         noGuess: game.noGuess,
-        maxOpening: config.maxOpening
+        maxOpening: config.maxOpening,
+        timeBudgetMs: config.timeBudgetMs
       });
       game.mines = result.field;
       game.guaranteed = !!result.guaranteed;

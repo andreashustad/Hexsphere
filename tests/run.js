@@ -353,6 +353,24 @@ describe('solver', function () {
     assert(Date.now() - started < 1500, 'and within a budget a first tap can absorb');
   });
 
+  /* Generation is synchronous and runs on the first tap, so its time budget is
+   * a freeze budget. The worst case is not the hardest board but the one just
+   * past feasible: there the solver keeps almost succeeding and grinds through
+   * every attempt. 4002 cells at 25% spent the full 4s and still failed. */
+  it('honours its time budget, because that budget is a frozen tab', function () {
+    /* 4002 cells at 25% is the measured worst case: just past feasible, where
+     * the solver keeps almost succeeding and grinds through every attempt. */
+    const sphere = buildSphere(GS.geometry.frequencyForCells(4002));
+    const g = GS.game.createGame({
+      sphere, mineCount: Math.round(sphere.count * 0.25), seed: 'corner-4002-0.25-1',
+      noGuess: true, timeBudgetMs: 150
+    });
+    const started = Date.now();
+    g.openAt(0);
+    const spent = Date.now() - started;
+    assert(spent < 900, 'generation took ' + spent + 'ms against a 150ms budget');
+  });
+
   it('generates boards that can be finished without guessing', function () {
     const cases = [
       { frequency: 3, density: 0.155 },
