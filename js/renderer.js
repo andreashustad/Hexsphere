@@ -1,4 +1,4 @@
-/* VibeMine — renderer.
+/* Hexsphere — renderer.
  *
  * A small purpose-built 3D engine on a 2D canvas: rotate the sphere with a
  * quaternion, project with a perspective camera, drop every back-facing cell

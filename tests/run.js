@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* VibeMine test suite. Run with: node tests/run.js
+/* Hexsphere test suite. Run with: node tests/run.js
  *
  * The game modules are plain browser scripts, so they are loaded into a fake
  * global here rather than imported. */

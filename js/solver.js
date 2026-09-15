@@ -1,4 +1,4 @@
-/* VibeMine — logic solver and board generator.
+/* Hexsphere — logic solver and board generator.
  *
  * The solver plays a board the way a careful human would: only ever acting on
  * deductions it can prove. It is used for three things:

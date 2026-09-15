@@ -1,4 +1,4 @@
-package com.andreashustad.vibemine;
+package com.andreashustad.hexsphere;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -17,7 +17,7 @@ import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewFeature;
 
 /**
- * VibeMine as a native shell: one WebView, no network, no permissions.
+ * Hexsphere as a native shell: one WebView, no network, no permissions.
  *
  * The web app is served through WebViewAssetLoader rather than a file:// URL,
  * which gives the page a proper secure origin — localStorage (settings,
@@ -33,7 +33,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         final WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
-                .setDomain("vibemine.localhost")
+                .setDomain("hexsphere.localhost")
                 .addPathHandler("/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
 
@@ -75,7 +75,7 @@ public class MainActivity extends Activity {
         setContentView(webView);
 
         if (savedInstanceState == null) {
-            webView.loadUrl("https://vibemine.localhost/index.html");
+            webView.loadUrl("https://hexsphere.localhost/index.html");
         } else {
             webView.restoreState(savedInstanceState);
         }

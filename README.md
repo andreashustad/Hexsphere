@@ -1,4 +1,4 @@
-# VibeMine
+# Hexsphere
 
 Minesweeper on a globe. The board is a sphere tiled with hexagons — plus the
 twelve pentagons you cannot avoid when you close hexagons into a ball — so there
@@ -9,7 +9,7 @@ A from-scratch rebuild of a globe minesweeper that disappeared from the Play
 Store, written as a web app that installs to an Android home screen and runs
 completely offline.
 
-![VibeMine](docs/screenshot-board.png)
+![Hexsphere](docs/screenshot-board.png)
 
 ## What it does differently
 
@@ -40,7 +40,7 @@ npx http-server . -p 8080     # then open http://localhost:8080/
 
 **As an installed web app.** Turn on GitHub Pages for this repository
 (Settings → Pages → *Deploy from a branch*, `main`, `/`), then open
-`https://andreashustad.github.io/VibeMine/` in Chrome on the phone and choose
+`https://andreashustad.github.io/Hexsphere/` in Chrome on the phone and choose
 **⋮ → Add to Home screen**. It installs with its own icon, launches without
 browser chrome, and works in aeroplane mode from then on. Long-press the icon
 for shortcuts straight into the daily challenge or a new game.

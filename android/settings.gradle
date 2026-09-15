@@ -12,5 +12,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VibeMine"
+rootProject.name = "Hexsphere"
 include ":app"

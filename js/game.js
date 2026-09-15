@@ -1,4 +1,4 @@
-/* VibeMine — game state.
+/* Hexsphere — game state.
  *
  * Mines are placed on the first click, never before, so the opening move
  * always lands in a clear pocket and the board can be built to be solvable

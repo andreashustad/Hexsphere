@@ -1,9 +1,9 @@
-/* VibeMine — settings, records and daily-challenge history.
+/* Hexsphere — settings, records and daily-challenge history.
  * Everything lives in localStorage; the game works fine without it. */
 (function (global) {
   'use strict';
 
-  const KEY = 'vibemine.v1';
+  const KEY = 'hexsphere.v1';
 
   const DEFAULT_SETTINGS = {
     theme: 'midnight',

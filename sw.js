@@ -1,7 +1,7 @@
-/* VibeMine service worker: precache everything, then serve from cache.
+/* Hexsphere service worker: precache everything, then serve from cache.
  * The game has no network features at all, so once installed it works
  * permanently offline — including on a phone in aeroplane mode. */
-const VERSION = 'vibemine-v1';
+const VERSION = 'hexsphere-v1';
 const ASSETS = [
   './',
   './index.html',

@@ -1,4 +1,4 @@
-/* VibeMine — application wiring: menus, HUD, game loop. */
+/* Hexsphere — application wiring: menus, HUD, game loop. */
 (function (global) {
   'use strict';
 
@@ -92,7 +92,7 @@
   /* The daily board is derived from the date alone, so every player gets the
    * identical puzzle, opened at the identical first cell. */
   function dailyPlan(dateKey) {
-    const rng = util.makeRng('vibemine-daily-' + dateKey);
+    const rng = util.makeRng('hexsphere-daily-' + dateKey);
     const pool = ['moon', 'earth', 'earth', 'neptune'];
     const pick = difficultyById(pool[rng.int(pool.length)]);
     const sphere = sphereFor(pick.frequency);
@@ -100,7 +100,7 @@
       difficulty: pick,
       sphere,
       mineCount: Math.round(sphere.count * pick.density),
-      seed: 'vibemine-daily-' + dateKey,
+      seed: 'hexsphere-daily-' + dateKey,
       start: rng.int(sphere.count)
     };
   }

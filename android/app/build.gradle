@@ -24,11 +24,11 @@ tasks.named('preBuild') {
 }
 
 android {
-    namespace 'com.andreashustad.vibemine'
+    namespace 'com.andreashustad.hexsphere'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.andreashustad.vibemine"
+        applicationId "com.andreashustad.hexsphere"
         minSdk 24
         targetSdk 34
         versionCode 1

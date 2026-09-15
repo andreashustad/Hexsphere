@@ -1,4 +1,4 @@
-/* VibeMine — small shared utilities: RNG, vector and quaternion math. */
+/* Hexsphere — small shared utilities: RNG, vector and quaternion math. */
 (function (global) {
   'use strict';
 

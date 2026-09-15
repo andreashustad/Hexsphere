@@ -1,4 +1,4 @@
-/* VibeMine — pointer, touch and keyboard input.
+/* Hexsphere — pointer, touch and keyboard input.
  *
  * One finger drags the globe (with inertia), a tap plays the cell under it,
  * a long press plants a flag, two fingers pinch to zoom. Everything is also

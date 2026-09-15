@@ -1,4 +1,4 @@
-/* VibeMine — board geometry.
+/* Hexsphere — board geometry.
  *
  * The board is a Goldberg polyhedron: subdivide an icosahedron `frequency`
  * times, project it onto the unit sphere, then take the dual. Every vertex of

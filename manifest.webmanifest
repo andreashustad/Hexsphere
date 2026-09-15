@@ -1,6 +1,6 @@
 {
-  "name": "VibeMine",
-  "short_name": "VibeMine",
+  "name": "Hexsphere",
+  "short_name": "Hexsphere",
   "description": "Minesweeper on a rotating globe of hexagons. Guaranteed guess-free boards, fully offline, no ads.",
   "start_url": "./index.html",
   "scope": "./",

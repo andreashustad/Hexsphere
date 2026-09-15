@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Renders the VibeMine app icons.
+/* Renders the Hexsphere app icons.
  *
  * The globe in the icon is the real board geometry — every pixel is assigned
  * to the nearest cell centre of an actual Goldberg sphere — so the icon can
