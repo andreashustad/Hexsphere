@@ -134,22 +134,78 @@ Fix: call the same win check at the end of `openAt`.
 Verification: test at the game layer with a seed whose opening clears the
 board.
 
----
+### Reported but not verified
 
-## Toolchain
+Three findings from the same review that were never checked against the code.
+Do not act on them without confirming first.
 
-The `android/` project has never compiled. Its declared versions are roughly
-two years behind the toolchain now installed, and four things have to move
-together or they just produce four different failures:
-
-- AGP, Gradle wrapper, `compileSdk` and `targetSdk`.
-- `targetSdk` has a floor set by Google Play for new apps, not by us. Check the
-  current floor on Play's target API level page before building a release.
-- The SDK platform actually installed is the one to compile against. Check
-  `~/Library/Android/sdk/platforms/` rather than assuming.
+- `MainActivity.java:103` — `webView.destroy()` called while the WebView is
+  still the content view. Claimed to crash on some vendor WebView builds.
+- `MainActivity.java:80` — `restoreState` has no fallback when it returns null,
+  claimed to leave a blank screen after process death.
+- `js/solver.js:430` — `solveBoard`'s `for(;;)` has no no-progress guard. The
+  reviewer did not demonstrate a case where `deduce` returns something
+  unrevealable, so this is theoretical.
 
 ---
 
 ## Improvements
 
-Not yet written. Andreas owns this section.
+Four sub-projects, each with its own design and each shippable alone. Ordered.
+Agreed 2026-09-15 that all three axes (looks, feel, content) are in play.
+
+**1. The eight bugs above.** No design conversation needed. Two of them are the
+looks-and-feel complaint: the reveal wave paints garbage over every cascade, and
+a silently unguaranteed board is why one occasionally feels unfair. Tuning
+polish on top of a renderer that mirrors polygons at 65x would be tuning a
+broken instrument.
+
+**2. Art direction.** The board names already promise an art direction nothing
+backs up: Pebble, Moon, Earth, Neptune, Sun all render as the same blue hex ball
+on the same starfield. Make each body distinct in surface, palette, lighting and
+sky, and give the typography a point of view. Self-contained in `styles.css`,
+the renderer's shading and the theme tokens; touches no game logic. The menu
+itself is competent and is not the problem.
+
+**3. Feel.** Animation timing, spin weight, haptics, the tactility of a cascade
+and a flag. Deliberately after 1 and 2: tuning timings against a correct
+renderer and a settled look is the only way to tell whether a change helped.
+
+**4. Content.** Modes, progression, reasons to return beyond the daily. Largest
+and most speculative, and its answer depends on whether this stays a game for
+one person. Deferred until that is known.
+
+---
+
+## Distribution
+
+Live as a PWA on GitHub Pages. That is the whole current distribution story and
+it costs nothing.
+
+Google Play, if it ever happens: the $25 developer account fee is not the real
+cost. A personal Play Console account created on or after 2023-11-13 must run a
+closed test with at least 12 testers continuously opted in for 14 days before
+production. Recruiting and holding twelve people who actually click the opt-in
+link is the actual barrier. Verify the rule is still current before planning
+around it.
+
+Also required before a Play submission, none of it done: a privacy policy URL, a
+completed Data Safety form, a content rating questionnaire, and store assets
+(feature graphic, screenshots, descriptions). Play wants an AAB
+(`bundleRelease`), not the APK.
+
+Two things to check rather than assume:
+
+- `android:allowBackup="true"` with no backup rules means Android auto-backup
+  syncs the WebView's `localStorage` to the user's Google Drive. That is data
+  leaving the device, which contradicts both the README's "nothing is sent
+  anywhere" and a "collects no data" Data Safety declaration. Either set it
+  false or declare it.
+- Play's spam policy targets apps that are a web page in a WebView. Hexsphere
+  should clear it (assets bundled, no remote URL, real game logic) but it is a
+  known rejection pattern worth knowing about in advance.
+
+Unverified as of 2026-09-15: whether Play's EU trader/non-trader declaration
+applies to a Norwegian individual publishing a free app and what it exposes
+publicly, and the status of Android's developer-verification requirement for
+sideloaded apps, which could affect plain APK distribution.
